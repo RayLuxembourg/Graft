@@ -43,7 +43,20 @@ config.
 - [DONE] 3 GENERIC_LANGS rows + queries: markdown, yaml — yaml limited to two key levels, see Decisions
 - [DONE] 4 drift threshold in refresh.ts (+ test) — `GRAFT_INLINE_REFRESH_MAX`, default 25
 - [DONE] 5a version `0.18.0-sisense.1`, CHANGELOG, build, tests (1235 pass; 4 claude-shim-resolve fail on pristine too — environmental)
-- [ ] 5b global install, index rebuild, latency check, try 6, brief update
+- [DONE] 5b global install, index rebuild (3×: 280s / 234s / 242s), latency 20–31s → ~7.5s, try 6
+  (13 calls · 80.9s tool · 18.5k tool tok · 53.5k agent tok · Q1 partial, Q2–Q4 full, Q5 partial
+  with an arm false negative — deterministic probes find be-services), brief updated in
+  `~/brain/verification/2026-09-16-graft-vs-knowledge-mcp-run-7-…`
+
+## Next
+
+- Per-call latency is ~7.5s vs 5.5s stock: the graph is 290k nodes (27k markdown headings, 31k
+  yaml keys) and a query loads wiring.json (347 MB) + the sidecar (204 MB) from disk. A compact
+  binary or per-scope sidecar would take most of it back.
+- Collapse identical `(scope, kind, name)` hits into one row with "+N files" (four `use_llm_gw`
+  values.yaml keys ate four of five slots on `USE_LLM_GW`).
+- Python module constants are in; TS `export const X = process.env…` should get the same
+  treatment where the depth tier does not already emit them.
 - [DONE] 6 brain: `apply.py` exits on a fork version; reference + known-issue notes updated
 
 ## Runtime findings
