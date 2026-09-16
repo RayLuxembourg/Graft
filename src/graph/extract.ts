@@ -1142,6 +1142,20 @@ function describe(node: Parser.SyntaxNode, ctx: WalkCtx): DefDescriptor | null {
     };
   }
 
+  // Python module-level constants: `USE_LLM_GW = os.environ.get("USE_LLM_GW", "False")`.
+  // The switches a code question turns on live here, and as residual text of the file
+  // node they were findable only by luck (benchmark run 7, Q1). UPPER_SNAKE names at
+  // module scope only — a loop variable or a local is not a symbol.
+  if (ctx.lang === "python" && node.type === "expression_statement" && ctx.enclosingKind === null) {
+    const a = node.namedChild(0);
+    if (a?.type === "assignment") {
+      const left = a.childForFieldName("left");
+      if (left?.type === "identifier" && /^[A-Z][A-Z0-9_]{2,}$/.test(left.text)) {
+        return { name: left.text, kind: "constant", headerEnd: node.endIndex, hashNode: node };
+      }
+    }
+  }
+
   const mapped = ctx.kinds[node.type];
   if (mapped) {
     const name = node.childForFieldName("name")?.text;

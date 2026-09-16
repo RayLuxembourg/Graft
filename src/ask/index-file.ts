@@ -28,7 +28,11 @@ import { CACHE_DIR } from "../context/node-file.js";
 const STOP = new Set([
   "the", "a", "an", "of", "to", "in", "is", "are", "how", "does", "do", "what",
   "where", "which", "that", "this", "it", "for", "on", "and", "or", "with",
-  "i", "we", "get", "set", "use", "used", "using", "when", "why", "can",
+  // "get" / "set" / "use" were stopwords upstream. They are also the first token of half
+  // the identifiers in a codebase (useState, getUser, USE_LLM_GW), and dropping them cost
+  // the exact match: `USE_LLM_GW` tied with `llm_gw_url`. idf already makes a common
+  // token near-weightless, so they stay; only prose filler is dropped.
+  "i", "we", "used", "using", "when", "why", "can",
   // Query-intent filler. Left in, a rare filler word scores like a rare identifier:
   // "made" put `ChangesMadeFnOverride` first for "where are Azure LLM calls made".
   "made", "make", "makes", "be", "by", "from", "into", "at", "as", "its", "their",

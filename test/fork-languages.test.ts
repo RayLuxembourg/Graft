@@ -7,6 +7,30 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { warmGenericGrammars, extractGeneric, genericLangOf } from "../src/graph/generic.js";
+import { skippedFile } from "../src/ingest/fs.js";
+import { extractFile } from "../src/graph/extract.js";
+
+test("python module-level UPPER_SNAKE assignments are constant symbols; locals and lowercase are not", () => {
+  const src = 'import os\nUSE_LLM_GW = os.environ.get("USE_LLM_GW", "False")\nlogger = get_logger()\n\ndef f():\n    LOCAL_X = 1\n    return LOCAL_X\n';
+  const r = extractFile("ai_services/llm_factory.py", src, "python");
+  const names = r.nodes.filter((n) => n.kind !== "file").map((n) => `${n.kind}:${n.name}`).sort();
+  assert.deepEqual(names, ["constant:USE_LLM_GW", "function:f"]);
+  const c = r.nodes.find((n) => n.name === "USE_LLM_GW")!;
+  assert.equal(c.span, "L2-L2");
+  assert.ok(c.body_text?.includes("environ"));
+});
+
+test("lockfiles and build artefacts are never walked", () => {
+  for (const f of ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "poetry.lock", "go.sum", "Chart.lock", "app.min.js", "bundle.js.map", "CHANGELOG.md", "CHANGELOG-v2.md", "RELEASE_NOTES.md"])
+    assert.ok(skippedFile(f), `${f} should be skipped`);
+  for (const f of ["values.yaml", "package.json", "lock.ts", "minutes.md", "map.ts"]) assert.ok(!skippedFile(f), `${f} is source`);
+});
+
+test("yaml symbols stop at the second level of keys", async () => {
+  await warmGenericGrammars(["yaml"]);
+  const r = extractGeneric("values.yaml", "a:\n  b:\n    c: 1\n  d: 2\ne: 3\n", "yaml");
+  assert.deepEqual(r.nodes.filter((n) => n.kind !== "file").map((n) => n.name).sort(), ["a", "b", "d", "e"]);
+});
 
 const LANGS = ["groovy", "bash", "sql", "hcl", "proto", "markdown", "yaml"];
 

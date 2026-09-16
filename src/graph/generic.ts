@@ -228,6 +228,16 @@ function fileNode(rel: string, source: string): NodeV1 {
 
 interface Def { id: string; startIndex: number; endIndex: number }
 
+/** Searchable body chars kept per symbol. Code keeps the depth-tier default; a doc
+ * section or a config key only needs enough to be found by the words near its name —
+ * a markdown section can run for pages and a yaml value can be a whole embedded
+ * document, and the sidecar stores every token of it. */
+function bodyCapFor(langName: string): number {
+  if (langName === "markdown") return 1500;
+  if (langName === "yaml") return 300;
+  return 5000;
+}
+
 /** Extract a single generic-tier file. Synchronous; needs the grammar pre-warmed.
  * Uses the grammar's compiled tags.scm when present (symbols + call edges);
  * otherwise falls back to a node-kind tree walker (symbols only) so ANY warmed
@@ -277,7 +287,7 @@ export function extractGeneric(rel: string, source: string, langName: string): E
       span: `L${startRow + 1}-L${endRow + 1}`,
       signature: sigLine || null, exported: true, origin: "generic",
       body_hash: contentHash(source.slice(whole.startIndex, whole.endIndex)),
-      body_text: source.slice(whole.startIndex, whole.endIndex).replace(/\s+/g, " ").slice(0, 5000),
+      body_text: source.slice(whole.startIndex, whole.endIndex).replace(/\s+/g, " ").slice(0, bodyCapFor(langName)),
       summary_state: "pending", summary: null, crux: null,
     });
     defs.push({ id, startIndex: whole.startIndex, endIndex: whole.endIndex });

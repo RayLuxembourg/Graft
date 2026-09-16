@@ -24,6 +24,9 @@ test("stem: plurals and verb forms meet their identifier token, conservatively",
 test("tokenize: query filler is dropped, tokens are stemmed", () => {
   assert.deepEqual(tokenize("where are Azure LLM calls made"), ["azure", "llm", "call"]);
   assert.deepEqual(tokenize("how does auth-service verify tokens"), ["auth", "service", "verify", "token"]);
+  // identifier-common words survive: an exact match on USE_LLM_GW needs its "use"
+  assert.deepEqual(tokenize("USE_LLM_GW"), ["use", "llm", "gw"]);
+  assert.deepEqual(tokenizeName("useState"), ["use", "state", "usestate"]);
 });
 
 test("tokenizeName: adjacent pairs join, so a camelCase compound is findable by its natural spelling", () => {
