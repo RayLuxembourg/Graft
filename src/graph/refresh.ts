@@ -66,6 +66,13 @@ export interface RefreshOptions {
 const CLEAN: RefreshResult = { refreshed: false };
 
 /** Env kill switch, for CI or anyone who wants queries to never write. */
+/** Largest drift (changed + added + removed files) a query will re-parse inline. */
+const INLINE_REFRESH_MAX_DEFAULT = 25;
+function inlineRefreshMax(): number {
+  const v = Number(process.env.GRAFT_INLINE_REFRESH_MAX);
+  return Number.isFinite(v) && v >= 0 ? v : INLINE_REFRESH_MAX_DEFAULT;
+}
+
 function envDisabled(): boolean {
   const v = process.env.GRAFT_NO_REFRESH;
   return v !== undefined && v !== "" && v !== "0" && v !== "false";
@@ -178,6 +185,20 @@ export async function ensureFreshGraph(root: string, opts: RefreshOptions = {}):
     // down, so it costs exactly one build, not one per query.
     const drift = probeDrift(dir, outDir);
     if (drift && isClean(drift)) return seedNote ? { refreshed: false, note: seedNote } : CLEAN;
+
+    // A small drift refreshes inline (seconds). A large one — another session moved a
+    // whole tree, a branch switch, a repo sync — would re-parse the moved files inside
+    // THIS query: measured at 217s twice against a ~6s steady state on a 36k-file index.
+    // On a shared machine that charges someone else's edits to your question. Above the
+    // threshold the query answers from the graph as-is and says so, naming the count
+    // and the command that fixes it; GRAFT_INLINE_REFRESH_MAX raises or lowers the bar.
+    if (drift && driftCount(drift) > inlineRefreshMax()) {
+      return {
+        refreshed: false,
+        drift,
+        note: `graph is ${driftCount(drift)} files behind the tree (limit ${inlineRefreshMax()} for an inline refresh) — answering from the current graph; run \`graft build\` to catch up`,
+      };
+    }
 
     // On the default layout this is `<root>/graft/.cache/.sync.lock`, the very file
     // the Claude Code hooks lock — so this refresh and the background sync can

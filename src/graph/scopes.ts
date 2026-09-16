@@ -29,7 +29,11 @@ import { readFollowNestedRepos, readFollowSubmodules, readIncludeDirs } from "..
 import type { GraphV1, ScopeV1 } from "./types.js";
 
 /** Project-marker files, checked in this order (also the order `markers` is built in). */
-const MARKERS = ["package.json", "go.mod", "pyproject.toml", "setup.py", "Cargo.toml", "composer.json", "pom.xml", "build.gradle", "build.gradle.kts"];
+// `.git` first: a nested clone is a scope even when its marker files sit one level
+// down (a Python monorepo with pyproject.toml under projects/*, a Java one with pom.xml
+// under be/). Without it those repos' hits carried no [repo/] label and `matched in:`
+// said "(root)" — measured 2026-09-16 on 2 of 66 repos, the two behind the weakest answers.
+const MARKERS = [".git", "package.json", "go.mod", "pyproject.toml", "setup.py", "Cargo.toml", "composer.json", "pom.xml", "build.gradle", "build.gradle.kts"];
 
 const CANONICAL_ROOT: ScopeV1[] = [{ prefix: "", label: "", markers: [] }];
 
@@ -142,7 +146,10 @@ export function discoverScopes(
 
   const markerMap = new Map<string, string[]>();
   for (const dir of dirs) {
-    const found = MARKERS.filter((m) => existsSync(join(absRoot, dir, m)));
+    // `.git` marks a NESTED clone only: the indexed root is a git repo in the common
+    // case, and letting that make "" a candidate would swallow every sibling scope
+    // under it in the nesting collapse below.
+    const found = MARKERS.filter((m) => !(m === ".git" && dir === "") && existsSync(join(absRoot, dir, m)));
     if (found.length) markerMap.set(dir, found);
   }
 

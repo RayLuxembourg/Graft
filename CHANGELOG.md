@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.18.0-sisense.1 (fork, 2026-09-16)
+
+Everything here was measured first on the 66-repo `~/work` index in benchmark run 7
+(graft vs the sisense-knowledge MCP): each item names the query that exposed it.
+
+### Changed — `ask` ranking
+
+- **Stemming and query-filler stopwords** in the shared tokenizer, so "tokens" meets
+  `verifyAccessToken`, "calls" meets `call_litellm_azure`, and a rare filler like
+  "made" no longer ranks `ChangesMadeFnOverride` first. Rebuild the index: the sidecar
+  caches tokens.
+- **Compound name tokens**: `AzureOpenAi` is also indexed as `openai`, and a query's
+  own word pairs act as a phrase signal against them.
+- **Path tokens are presence-only**, with a boost for the share of the query found in
+  the symbol's NAME; a repeated directory name no longer beats an exact name match.
+- **Domain synonyms** on the name score only (`elasticube→ec`, `token↔jwt`,
+  `endpoint→controller/route/mapping`, `gateway↔gw`, …).
+- **A repo name written in the query narrows to that repo** (the equivalent of `--in`)
+  and leaves the query.
+- **Bundler output** (`storybook-static/`, `*.min.js`, hashed `chunk-*.js`) ranks at
+  ×0.1; **example/demo/fixture code** at ×0.5 unless the query asks for examples.
+- `--source` inlines at most 40 lines per span and 240 characters per line.
+
+### Added — languages
+
+- Generic-tier grammars with queries for **groovy** (Jenkins shared libraries, Gradle),
+  **bash**, **sql**, **hcl/Terraform**, **proto**, and the two config/doc formats whose
+  keys and headings become symbols: **yaml** and **markdown**. A `use_llm_gw: true` in
+  a values.yaml or a `## USE_LLM_GW` heading in a doc is now an `ask` hit.
+- `scripts/probe-grammar.mjs`: print a grammar's node types for a sample file, so a
+  new `queries/<lang>.scm` is written from evidence rather than guessed.
+
+### Changed — scopes and freshness
+
+- **`.git` is a scope marker**: a nested clone whose marker files sit one level down
+  (a Python monorepo, a Java one with `pom.xml` under `be/`) gets its `[repo/]` label
+  and can be scoped with `--in`.
+- **Inline refresh has a ceiling** (`GRAFT_INLINE_REFRESH_MAX`, default 25 files). A
+  larger drift used to be re-parsed inside the query — 217s measured twice; now the
+  query answers from the graph as-is and says how far behind it is.
+
 ## 0.18.0
 
 ### Added

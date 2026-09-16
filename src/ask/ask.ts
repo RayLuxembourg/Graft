@@ -47,7 +47,7 @@ import {
   preparePageRankPartitions,
 } from "./graphrank.js";
 import { readSourceFile } from "../util/source.js";
-import { counts, tokenize, type AskIndex, type AskIndexDoc } from "./index-file.js";
+import { counts, tokenize, tokenizeName, type AskIndex, type AskIndexDoc } from "./index-file.js";
 import { rulesForPointers, formatRules, type AppliedRule } from "../brain/attach.js";
 import { readLink, readRulesCache } from "../brain/link.js";
 
@@ -96,7 +96,10 @@ export interface AskRankingMetadata {
 
 /** Max source lines to inline per hit — a definition longer than this is
  * truncated with a marker, so one giant function can't blow up the pack. */
-const MAX_SPAN_LINES = 80;
+const MAX_SPAN_LINES = 40;
+/** A minified line can be 100k chars; this caps what one inlined line may add to the
+ * pack. Hand-written code essentially never exceeds it. */
+const MAX_LINE_CHARS = 240;
 
 export interface AskResult {
   query: string;
@@ -203,6 +206,61 @@ export function isTestPath(path: string): boolean {
   return /(^|\/)(tests?|__tests__|spec)\/|(_test|\.test|\.spec)\.[a-z]+$|(^|\/)(test_[^/]+|conftest)\.py$/i.test(path || "");
 }
 const TEST_RANK_PENALTY = 0.35;
+
+/** Bundler output that survived SKIP_DIRS — storybook-static, *.min.js, hashed
+ * chunk-*.js, sb-manager/preview/addons, .next, __generated__ — is minified vendored
+ * code. One benchmark hit inlined ~6.5k tokens of React internals as a top result.
+ * It stays indexed (grep still sees it) but ranks well below hand-written source. */
+export function isGeneratedPath(path: string): boolean {
+  return /(^|\/)(storybook-static|sb-manager|sb-preview|sb-addons|\.next|__generated__)\/|\.min\.(js|css)$|(^|\/)chunk-[A-Za-z0-9_-]{6,}\.js$|\.bundle\.js$/i.test(path || "");
+}
+const GENERATED_RANK_PENALTY = 0.1;
+
+/** Example / demo / sample / fixture code mirrors the real API's tokens — an
+ * `examples/compare_responses.py` out-ranked the production Azure client for four
+ * benchmark tries. Same treatment as tests, milder, lifted when the query asks for
+ * examples. */
+export function isExamplePath(path: string): boolean {
+  return /(^|\/)(examples?|samples?|demos?|__demo__|__demos__|fixtures|playground|sandbox)\//i.test(path || "");
+}
+const EXAMPLE_RANK_PENALTY = 0.5;
+
+/** Presence-only bag (every count → 1). Path tokens are scored this way: a directory
+ * name repeated along a path (`webAccessTokens/tokenConfiguration` → "token"×3) was
+ * out-scoring an exact full-name match in another repo. */
+function binaryBag(m: Map<string, number>): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const k of m.keys()) out.set(k, 1);
+  return out;
+}
+
+/** Domain query expansion, query side only (the sidecar is untouched). Synonyms enter
+ * the NAME scoring bag at half weight and never the path/body bags or the
+ * coverage/strength bags: applied to the body score they let big classes full of
+ * "authentication"/"jwt" swamp the definition being asked for (measured). */
+const SYNONYMS = new Map<string, string[]>([
+  ["elasticube", ["ec", "cube", "ecm"]], ["cube", ["elasticube", "ec"]],
+  ["token", ["jwt"]], ["jwt", ["token"]],
+  ["verify", ["validate", "verification"]], ["validate", ["verify", "validation"]],
+  ["auth", ["authentication", "authorization"]],
+  ["llm", ["model", "openai"]], ["azure", ["openai"]],
+  ["trigger", ["start", "run"]], ["start", ["trigger"]],
+  ["widget", ["chart"]], ["dashboard", ["dash"]],
+  ["assistant", ["chat", "ai"]],
+  ["config", ["configuration", "setting"]], ["configuration", ["config"]],
+  ["endpoint", ["controller", "route", "mapping", "rest"]], ["http", ["controller", "rest", "route"]],
+  ["api", ["controller", "rest"]], ["entry", ["controller", "main"]],
+  ["gateway", ["gw"]], ["gw", ["gateway"]], ["env", ["environ", "environment"]],
+]);
+function expandQuery(q: Map<string, number>, query: string): Map<string, number> {
+  const qs = new Map(q);
+  for (const t of q.keys()) for (const syn of SYNONYMS.get(t) ?? []) if (!qs.has(syn)) qs.set(syn, 0.5);
+  // The query's own bigrams meet a name's compound tokens (see `tokenizeName`): a
+  // phrase signal that only a name carrying the words in that order can earn.
+  const qt = tokenize(query);
+  for (let i = 0; i + 1 < qt.length; i++) { const bg = qt[i] + qt[i + 1]; if (!qs.has(bg)) qs.set(bg, 0.75); }
+  return qs;
+}
 
 function score(
   query: Map<string, number>,
@@ -501,13 +559,34 @@ function lexical(
   const q = new Map([...counts(tokenize(query)).keys()].map((t) => [t, 1]));
   const graph = corpus.graph;
 
+  // A repo/scope name written in the query ("auth-service", "compose-sdk-monorepo") is
+  // WHERE to look, not WHAT to score. Left as terms, the repo name's rare tokens
+  // out-weigh the real subject and every file in that repo ties on them, while other
+  // repos with the same words in their paths float up. It becomes the equivalent of
+  // `--in`, and its tokens leave the query. Exactly one match, or nothing changes.
+  if (!inPrefix && graph?.meta?.scopes) {
+    const ql = ` ${query.toLowerCase()} `;
+    const named = graph.meta.scopes
+      .filter((s) => { const b = s.prefix.split("/").pop() ?? ""; return b.length > 3 && ql.includes(` ${b.toLowerCase()} `); })
+      .sort((a, b) => b.prefix.length - a.prefix.length);
+    if (named.length === 1) {
+      inPrefix = named[0].prefix;
+      for (const t of tokenize(named[0].prefix.split("/").pop() ?? "")) q.delete(t);
+    }
+  }
+  const qs = expandQuery(q, query); // NAME scoring bag only
+
   // Test-file de-ranking is query-aware: a query that ASKS about tests wants test
   // files on top, so it gets no penalty; every other query wants the real
   // definition first. This stops a test that merely contains the query's literals
   // (e.g. `TestDownloadStall` matching "download stall") from outranking the
   // source it exercises — the "tests ranked above the actual code" trap.
   const wantsTests = /\b(tests?|specs?|coverage|assert(?:ion)?s?|fixtures?|mocks?)\b/i.test(query);
-  const testFactor = (path: string): number => (!wantsTests && isTestPath(path) ? TEST_RANK_PENALTY : 1);
+  const wantsExamples = /\b(examples?|samples?|demos?|fixtures?)\b/i.test(query);
+  const testFactor = (path: string): number =>
+    (!wantsTests && isTestPath(path) ? TEST_RANK_PENALTY : 1) *
+    (isGeneratedPath(path) ? GENERATED_RANK_PENALTY : 1) *
+    (!wantsExamples && isExamplePath(path) ? EXAMPLE_RANK_PENALTY : 1);
 
   // ── Pass 1: tokenize every scored field once, and collect per-document token
   // bags so IDF can down-weight words that occur across the whole corpus. `--in`
@@ -558,11 +637,11 @@ function lexical(
   const graphNodes = inPrefix ? (graph?.nodes ?? []).filter((n) => pathUnderPrefix(n.path, inPrefix)) : (graph?.nodes ?? []);
   const symbolDocs = graphNodes.map((n) => {
     const d = docById?.get(n.id);
-    if (d) return { n, name: new Map(d.name), path: new Map(d.path), body: new Map(d.body) };
+    if (d) return { n, name: new Map(d.name), path: binaryBag(new Map(d.path)), body: new Map(d.body) };
     return {
       n,
-      name: counts(tokenize(n.name)),
-      path: counts(tokenize(n.path)),
+      name: counts(tokenizeName(n.name)),
+      path: binaryBag(counts(tokenize(n.path))),
       // The body (indexed at build) joins the signature + summary as the low-weight
       // body field, so a term that appears only in the code — not the name/signature
       // — still makes the node findable. IDF (from these same bags) keeps a word
@@ -595,6 +674,12 @@ function lexical(
     ? askIndex.docCount + conceptBags.length
     : conceptBags.length + symbolDocs.length;
   const dfltIdf = Math.log(1 + nDocs);
+  // A symbol whose NAME carries most of the query's idf mass (`verifyAccessToken` for
+  // "verify tokens") is the definition being asked for; lift it over nodes that match
+  // only in path or body. File nodes get no lift — a basename is a path component, not
+  // a symbol name (same reasoning as `strongShare`).
+  const nameBoost = (n: { kind: string }, name: Map<string, number>): number =>
+    n.kind === "file" ? 1 : 1 + matchedIdfShare(q, [name], idf, dfltIdf);
   const matchedOf = new Map<AskHit, number>();
   // Parallel to matchedOf, but over NAME+PATH only (body dropped) — the
   // match-strength signal exported as `coverageStrong`.
@@ -733,9 +818,10 @@ function lexical(
           for (const { n, name, path, body } of docs) {
             const factor = testFactor(n.path);
             const total =
-              (score(q, name, idf) * 3 +
+              (score(qs, name, idf) * 3 +
                 score(q, path, idf) * 2 +
                 bm25(q, body, idf, bodyLen(body), avgBodyLen)) *
+              nameBoost(n, name) *
               factor;
             if (total > 0) {
               out.set(n.id, total);
@@ -916,9 +1002,10 @@ function lexical(
     // is length-normalized via BM25 so long definitions don't win on bulk.
     const factor = testFactor(n.path);
     const total =
-      (score(q, name, idf) * 3 +
+      (score(qs, name, idf) * 3 +
         score(q, path, idf) * 2 +
         bm25(q, body, idf, bodyLen(body), avgBodyLen)) *
+      nameBoost(n, name) *
       factor;
     if (total > 0) {
       lex.set(n.id, total);
@@ -1255,7 +1342,9 @@ function sliceSpan(root: string, path: string, from: number, to: number): string
     const lines = source.split("\n");
     const start = Math.max(1, from);
     const end = Math.min(lines.length, to);
-    const slice = lines.slice(start - 1, end);
+    const slice = lines
+      .slice(start - 1, end)
+      .map((l) => (l.length > MAX_LINE_CHARS ? l.slice(0, MAX_LINE_CHARS) + " …(line truncated)" : l));
     if (slice.length > MAX_SPAN_LINES) {
       const head = slice.slice(0, MAX_SPAN_LINES);
       head.push(`… (+${slice.length - MAX_SPAN_LINES} more lines; open ${path}:L${start}-L${end})`);
