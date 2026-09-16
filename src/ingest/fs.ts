@@ -3,7 +3,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /** Directories that are dependency/build output, never source. */
 export const SKIP_DIRS = new Set([
@@ -23,6 +23,14 @@ export const SKIP_DIRS = new Set([
   "__pycache__",
   "venv",
 ]);
+
+/** Files that are never the answer to a code question and swamp the index when a text
+ * tier indexes them: package-manager lockfiles (one pnpm-lock.yaml produced 20k key nodes
+ * on the first fork build), source maps, minified bundles. Skipped at every walk. */
+export const SKIP_FILES = /^(pnpm-lock\.yaml|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|poetry\.lock|Pipfile\.lock|Cargo\.lock|go\.sum|composer\.lock|Gemfile\.lock|bun\.lockb?|Chart\.lock|uv\.lock)$|^(CHANGELOG|CHANGES|HISTORY|RELEASE[_-]?NOTES)[^/]*\.mdx?$|\.(min\.js|min\.css|js\.map|css\.map)$/i;
+export function skippedFile(name: string): boolean {
+  return SKIP_FILES.test(name);
+}
 
 /** Files above this size are generated/vendored in practice, not hand-written code. */
 export const MAX_FILE_BYTES = 1_000_000;
@@ -273,7 +281,7 @@ function gitVisibleFiles(
 
     try {
       const stat = lstatSync(abs);
-      if (!stat.isFile() || stat.size > MAX_FILE_BYTES) continue;
+      if (!stat.isFile() || stat.size > MAX_FILE_BYTES || skippedFile(basename(abs))) continue;
     } catch {
       // A tracked file deleted from the working tree is still printed by
       // `--cached`; absence means it is not part of the current source set.
@@ -308,7 +316,7 @@ function gitVisibleFilesShallow(root: string, includes?: ReadonlySet<string>): s
     const abs = resolve(root, rel);
     try {
       const stat = lstatSync(abs);
-      if (!stat.isFile() || stat.size > MAX_FILE_BYTES) continue;
+      if (!stat.isFile() || stat.size > MAX_FILE_BYTES || skippedFile(basename(abs))) continue;
     } catch {
       // A tracked file deleted from the working tree is still printed by
       // `--cached`; absence means it is not part of the current source set.
@@ -334,7 +342,7 @@ function walkFilesystem(dir: string, includes?: ReadonlySet<string>): string[] {
       if (shouldSkipDir(entry.name, includes)) continue;
       out.push(...walkFilesystem(full, includes));
     } else if (entry.isFile()) {
-      if (entry.name.startsWith(".")) continue; // dot-files are not source either
+      if (entry.name.startsWith(".") || skippedFile(entry.name)) continue; // dot-files and lockfiles are not source
       try {
         if (statSync(full).size > MAX_FILE_BYTES) continue;
       } catch {

@@ -36,14 +36,25 @@ config.
 
 ## Steps
 
-- [ ] 1a port index-file.ts (+ tests)
-- [ ] 1b port ask.ts (+ tests)
-- [ ] 1c port scopes.ts (+ test)
-- [ ] 2 GENERIC_LANGS rows + queries: groovy, bash, sql, hcl, proto
-- [ ] 3 GENERIC_LANGS rows + queries: markdown, yaml
-- [ ] 4 drift threshold in refresh.ts (+ test)
-- [ ] 5 version/CHANGELOG, build, test, global install, index rebuild, try 6, brief update
-- [ ] 6 brain: sync_repos.sh drops apply.py (source now carries the patches); notes updated
+- [DONE] 1a port index-file.ts (+ tests) — `stem`, `tokenizeName`, stopwords; `test/fork-ranking.test.ts`
+- [DONE] 1b port ask.ts (+ tests) — plus `isDocPath`/`isConfigPath` penalties added after the first fork build
+- [DONE] 1c port scopes.ts (+ test) — `.git` marker, root excluded (broke graph-scopes #39 otherwise)
+- [DONE] 2 GENERIC_LANGS rows + queries: groovy, bash, sql, hcl, proto — node names from `scripts/probe-grammar.mjs`
+- [DONE] 3 GENERIC_LANGS rows + queries: markdown, yaml — yaml limited to two key levels, see Decisions
+- [DONE] 4 drift threshold in refresh.ts (+ test) — `GRAFT_INLINE_REFRESH_MAX`, default 25
+- [DONE] 5a version `0.18.0-sisense.1`, CHANGELOG, build, tests (1235 pass; 4 claude-shim-resolve fail on pristine too — environmental)
+- [ ] 5b global install, index rebuild, latency check, try 6, brief update
+- [DONE] 6 brain: `apply.py` exits on a fork version; reference + known-issue notes updated
+
+## Runtime findings
+
+- **First fork build (2026-09-16 23:xx): 221k → 527k nodes, 314MB sidecar, queries 20–31s (was 5–6s).**
+  yaml alone was 237k nodes: `pnpm-lock.yaml` ×3 = 51k, kube-prometheus CRDs 6–8k each, every
+  nested key a symbol. Docs/config headings also out-ranked code (`build-ec-mgmt` yaml keys ×5
+  above `BuildECMgmtController`). Fixes in the same branch: lockfiles/source maps skipped at the
+  walk (`SKIP_FILES` in ingest/fs.ts), yaml symbols only at key depth ≤ 2 with the capture on the
+  pair, per-language body caps (markdown 1500, yaml 300 chars), ×0.4 / ×0.6 rank penalties for
+  doc / config nodes unless the query asks for docs or config.
 
 ## Decisions
 
