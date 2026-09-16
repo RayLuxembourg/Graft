@@ -48,7 +48,8 @@ test("genericLangOf routes .rs to the breadth tier (and not depth-tier extension
   assert.equal(genericLangOf("src/main.rs")?.name, "rust");
   assert.equal(genericLangOf("src/init.lua")?.name, "lua");
   assert.equal(genericLangOf("src/app.ts"), null); // depth tier owns .ts
-  assert.equal(genericLangOf("README.md"), null);
+  assert.equal(genericLangOf("README.md")?.name, "markdown"); // docs are indexed since the Sisense fork
+  assert.equal(genericLangOf("logo.png"), null);
 });
 
 test("extractGeneric emits nodes + bare-name call edges for Rust (no rust-specific code)", async () => {

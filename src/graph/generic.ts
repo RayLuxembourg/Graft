@@ -58,6 +58,19 @@ export const GENERIC_LANGS: readonly GenericLang[] = [
   { name: "clojure", exts: [".clj", ".cljs", ".cljc", ".bb"], wasm: "clojure" },
   { name: "nix", exts: [".nix"], wasm: "nix" },
   { name: "lua", exts: [".lua"], wasm: "lua" },
+  // Sisense fork, 2026-09-16. What the ~/work tree actually contains that upstream
+  // skipped: Jenkins shared libraries (groovy), shell, SQL, Terraform, protobuf — and the
+  // two "not code" formats that hold the switches code questions turn on: Helm/k8s YAML
+  // and Markdown docs. Each ships a queries/<name>.scm turning the file's declarations
+  // (functions, tables, resources, messages, headings, top-level keys) into symbols, so
+  // `ask` scores `use_llm_gw: true` in a values.yaml like any identifier.
+  { name: "groovy", exts: [".groovy", ".gradle", ".jenkinsfile"], wasm: "groovy" },
+  { name: "bash", exts: [".sh", ".bash", ".zsh"], wasm: "bash" },
+  { name: "sql", exts: [".sql"], wasm: "sql" },
+  { name: "hcl", exts: [".tf", ".tfvars", ".hcl"], wasm: "hcl" },
+  { name: "proto", exts: [".proto"], wasm: "proto" },
+  { name: "markdown", exts: [".md", ".mdx"], wasm: "markdown" },
+  { name: "yaml", exts: [".yaml", ".yml"], wasm: "yaml" },
 ];
 
 const byExt = new Map<string, GenericLang>();

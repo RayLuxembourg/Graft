@@ -63,7 +63,7 @@ function builtRepo(): string {
     join(d, "src", "report.ts"),
     'import { total } from "./total.js";\nexport function report(xs: number[]): string {\n  return `sum=${total(xs)}`;\n}\n',
   );
-  writeFileSync(join(d, "README.md"), "# fixture\n");
+  writeFileSync(join(d, "NOTES.txt"), "# fixture\n");
 
   git(d, "init", "-b", "main");
   git(d, "config", "user.email", "test@example.com");
@@ -139,11 +139,11 @@ test("blast --base: diffs against the merge base, and reports the ranges it read
 
 test("blast: a changed file no parser claims is reported, never silently dropped", () => {
   const d = builtRepo();
-  writeFileSync(join(d, "README.md"), "# fixture\n\nnow with prose\n");
+  writeFileSync(join(d, "NOTES.txt"), "# fixture\n\nnow with prose\n");
 
   const report = blastJson([d]);
 
-  assert.deepEqual(report.unindexed, ["README.md"]);
+  assert.deepEqual(report.unindexed, ["NOTES.txt"]);
   assert.deepEqual(report.impacted, [], "nothing to walk from an unindexed file");
 });
 
@@ -189,7 +189,7 @@ test("blast --format mermaid: bare diagram, and a comment (not a failure) when t
 
   // A README-only diff has no dependents: a CI step must not fail on that.
   writeFileSync(join(d, "src", "math.ts"), MATH);
-  writeFileSync(join(d, "README.md"), "# fixture\n\nprose\n");
+  writeFileSync(join(d, "NOTES.txt"), "# fixture\n\nprose\n");
   const empty = runCli(["blast", d, "--format", "mermaid"]);
   assert.equal(empty.status, 0, empty.describe());
   assert.match(empty.stdout, /no dependents to draw/);

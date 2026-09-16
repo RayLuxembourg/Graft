@@ -29,18 +29,58 @@ const STOP = new Set([
   "the", "a", "an", "of", "to", "in", "is", "are", "how", "does", "do", "what",
   "where", "which", "that", "this", "it", "for", "on", "and", "or", "with",
   "i", "we", "get", "set", "use", "used", "using", "when", "why", "can",
+  // Query-intent filler. Left in, a rare filler word scores like a rare identifier:
+  // "made" put `ChangesMadeFnOverride` first for "where are Azure LLM calls made".
+  "made", "make", "makes", "be", "by", "from", "into", "at", "as", "its", "their",
+  "all", "any", "about", "who", "if", "so", "then", "there", "here", "via", "through",
+  "should", "would", "could", "will", "did", "done", "each", "every", "some", "than",
+  "actually", "really", "today", "currently", "live",
 ]);
 
-/** Split prose + identifiers into lowercased subword tokens (camelCase, snake, kebab).
- * The single source of truth for tokenization — shared by build-time indexing
- * (this file) and query-time fallback (`ask.ts`) so the sidecar is a provably
- * exact cache of the live path. */
+/** Light suffix stemming so a natural-language plural or verb form meets its
+ * identifier token: "tokens"→"token" (verifyAccessToken), "calls"→"call"
+ * (call_litellm_azure), "builds"/"building"→"build", "triggered"→"trigger",
+ * "verifies"/"verified"/"verifying"→"verify". Deliberately conservative — never
+ * below 3 chars, never touches "ss"/"us"/"is" endings, no vowel rules — because a
+ * false merge costs precision on every query while a missed merge costs recall on
+ * one. Runs inside `tokenize`, so build and query sides always agree. */
+export function stem(t: string): string {
+  if (t.length <= 3 || /^[0-9]+$/.test(t)) return t;
+  if (t.endsWith("ies") && t.length > 4) return t.slice(0, -3) + "y";
+  if (t.endsWith("ied") && t.length > 4) return t.slice(0, -3) + "y";
+  if (t.endsWith("ying") && t.length > 5) return t.slice(0, -4) + "y";
+  if (t.endsWith("ing") && t.length > 5) return t.slice(0, -3);
+  if (t.endsWith("ed") && t.length > 4 && !t.endsWith("eed")) return t.slice(0, -2);
+  if (t.endsWith("es") && t.length > 4 && /(s|x|z|ch|sh)es$/.test(t)) return t.slice(0, -2);
+  if (t.endsWith("s") && t.length > 3 && !/(ss|us|is)$/.test(t)) return t.slice(0, -1);
+  return t;
+}
+
+/** Split prose + identifiers into lowercased subword tokens (camelCase, snake, kebab),
+ * stemmed. The single source of truth for tokenization — shared by build-time
+ * indexing (this file) and query-time fallback (`ask.ts`) so the sidecar is a
+ * provably exact cache of the live path. */
 export function tokenize(text: string): string[] {
   return text
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2") // camelCase → camel Case
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((t) => t.length > 1 && !STOP.has(t));
+    .filter((t) => t.length > 1 && !STOP.has(t))
+    .map(stem);
+}
+
+/** NAME-field tokens: the subword tokens plus each adjacent pair joined.
+ * camelCase splitting turns `AzureOpenAi` into azure · open · ai, so a query
+ * saying "openai" never met the class; the joined pair (`openai`) restores that,
+ * and doubles as a phrase signal — a query's own bigrams (`verifyaccess`,
+ * `accesstoken`) match only a name that carries the words in that order. Name
+ * fields are short, so the sidecar grows by a few percent; path and body bags
+ * are unchanged. */
+export function tokenizeName(text: string): string[] {
+  const toks = tokenize(text);
+  const out = toks.slice();
+  for (let i = 0; i + 1 < toks.length; i++) out.push(toks[i] + toks[i + 1]);
+  return out;
 }
 
 /** Term-frequency count map. */
@@ -101,7 +141,7 @@ export function writeAskIndex(outDir: string, graph: GraphV1): string {
   const df = new Map<string, number>();
 
   for (const n of nodes) {
-    const name = counts(tokenize(n.name));
+    const name = counts(tokenizeName(n.name));
     const path = counts(tokenize(n.path));
     const body = counts(
       tokenize(`${n.signature ?? ""} ${n.summary ?? ""} ${n.body_text ?? ""}`),

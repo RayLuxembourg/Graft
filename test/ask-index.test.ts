@@ -17,7 +17,7 @@ import { buildGraph } from "../src/graph/build.js";
 import { ask } from "../src/ask/ask.js";
 import { contextDirFor } from "../src/context/node-file.js";
 import { readGraph, wiringPath } from "../src/graph/write.js";
-import { askIndexPath, readAskIndex, tokenize, counts, writeAskIndex } from "../src/ask/index-file.js";
+import { askIndexPath, readAskIndex, tokenize, tokenizeName, stem, counts, writeAskIndex } from "../src/ask/index-file.js";
 import { extractFile, languageOf } from "../src/graph/extract.js";
 import type { GraphV1, NodeV1 } from "../src/graph/types.js";
 
@@ -108,7 +108,7 @@ test("writeAskIndex + readAskIndex round-trip matches live tokenization exactly"
     for (const n of graph!.nodes) {
       const d = byId.get(n.id);
       assert.ok(d, `sidecar should carry a doc for ${n.id}`);
-      const liveName = [...counts(tokenize(n.name)).entries()];
+      const liveName = [...counts(tokenizeName(n.name)).entries()];
       const livePath = [...counts(tokenize(n.path)).entries()];
       const liveBody = [
         ...counts(tokenize(`${n.signature ?? ""} ${n.summary ?? ""} ${n.body_text ?? ""}`)).entries(),
