@@ -45,13 +45,17 @@ test("a workspace parent counts as a root — workspace.json, no wiring.json", (
   assert.deepEqual(nearestGraftRoot(scratch), { root: parent, levels: 1 });
 });
 
-test("the NEAREST root wins — a built child inside a workspace parent, not the parent", () => {
+test("a built child inside a workspace parent escalates to the parent (centralized by default)", () => {
   const parent = workspaceParent(tmpRepo("root-nearest"), ["child"]);
   const child = builtRepo(join(parent, "child"));
   const deep = join(child, "src");
   mkdirSync(deep, { recursive: true });
 
-  assert.deepEqual(nearestGraftRoot(deep), { root: child, levels: 1 }, "must stop at the child, not federate at the parent");
+  // The child's own graph is subsumed by the parent's federation (which includes
+  // it), so an implicit query anywhere inside the workspace sees the whole
+  // workspace; `--in <child>/` narrows back to one repo.
+  assert.deepEqual(nearestGraftRoot(deep), { root: parent, levels: 1 }, "must escalate to the workspace parent");
+  assert.deepEqual(nearestGraftRoot(child), { root: parent, levels: 0 }, "even from the child root itself");
 });
 
 test("nothing indexed anywhere above → the start dir, so `build` in a fresh repo still means here", () => {

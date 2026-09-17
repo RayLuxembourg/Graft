@@ -37,9 +37,29 @@ export function nearestGraftRoot(start: string, override?: string): RootResoluti
   if (override) return { root: from, levels: 0 };
   let dir = from;
   for (let levels = 0; ; levels++) {
-    if (hasGraftIndex(dir)) return { root: dir, levels };
+    if (hasGraftIndex(dir)) return { root: escalateToWorkspaceParent(dir), levels };
     const up = dirname(dir);
     if (up === dir) return { root: from, levels: 0 }; // hit the filesystem root, nothing indexed
     dir = up;
+  }
+}
+
+/**
+ * Workspace centralization: when the nearest graft index belongs to a repo whose PARENT
+ * federates a workspace (holds `graft/workspace.json`), resolve to the parent instead.
+ * The parent's federation includes this repo's own graph, so an implicit query from
+ * inside any child sees the whole workspace by default; `--in <repo>/` narrows back
+ * to one repo. An explicit `[dir]` never lands here (the walk only runs implicitly).
+ */
+function escalateToWorkspaceParent(found: string): string {
+  let dir = found;
+  for (;;) {
+    const parent = dirname(dir);
+    if (parent === dir) return dir;
+    if (existsSync(workspacePath(parent))) {
+      dir = parent;
+      continue;
+    }
+    return dir;
   }
 }
