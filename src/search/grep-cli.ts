@@ -11,6 +11,9 @@ import { resolve } from "node:path";
 import { contextDirFor } from "../context/node-file.js";
 import { withSavings } from "../context/savings.js";
 import { loadGraphCached } from "../graph/load.js";
+import { normalizePathPrefix } from "../util/paths.js";
+import { openStore } from "../graph/store.js";
+import { tokenize } from "../ask/index-file.js";
 import { grepGraph, type GrepGroup, type GrepResult } from "./grep.js";
 
 export interface GrepCliOptions {
@@ -87,11 +90,26 @@ export function zeroHitNote(result: GrepResult): string {
 export function runGrepCommand(pattern: string, dir: string, opts: GrepCliOptions): void {
   const root = resolve(dir);
   const contextDir = contextDirFor(root, opts.globalDir);
-  const graph = loadGraphCached(contextDir);
+  // Unscoped grep on a workspace index used to read every indexed file (47k, ~4 min).
+  // With the SQLite store (fork) the pattern's word tokens prefilter the files through
+  // the FTS index; only those are opened and regex-scanned.
+  let graph = null as ReturnType<typeof loadGraphCached>;
+  let prefiltered: number | null = null;
+  const store = opts.in ? null : openStore(contextDir);
+  if (store) {
+    const words = tokenize(pattern.replace(/[^A-Za-z0-9]+/g, " ")).filter((t) => t.length >= 3);
+    if (words.length) {
+      const files = store.filesForTokens(words);
+      graph = store.filesGraph(files);
+      prefiltered = files.length;
+    }
+  }
+  if (!graph) graph = loadGraphCached(contextDir, opts.in ? normalizePathPrefix(opts.in) : undefined);
   if (!graph) {
     console.error("✗ no graph — run graft build first");
     process.exit(1);
   }
+  if (prefiltered !== null) console.error(`(index-prefiltered: ${prefiltered} files carry every word of the pattern; scanned only those — add --in to scan a whole scope)`);
 
   let result: GrepResult;
   try {

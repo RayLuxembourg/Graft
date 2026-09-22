@@ -28,7 +28,11 @@ import { CACHE_DIR } from "../context/node-file.js";
 const STOP = new Set([
   "the", "a", "an", "of", "to", "in", "is", "are", "how", "does", "do", "what",
   "where", "which", "that", "this", "it", "for", "on", "and", "or", "with",
-  "i", "we", "get", "set", "use", "used", "using", "when", "why", "can",
+  // "get" / "set" / "use" were stopwords upstream. They are also the first token of half
+  // the identifiers in a codebase (useState, getUser, USE_LLM_GW), and dropping them cost
+  // the exact match: `USE_LLM_GW` tied with `llm_gw_url`. idf already makes a common
+  // token near-weightless, so they stay; only prose filler is dropped.
+  "i", "we", "used", "using", "when", "why", "can",
   // Query-intent filler. Left in, a rare filler word scores like a rare identifier:
   // "made" put `ChangesMadeFnOverride` first for "where are Azure LLM calls made".
   "made", "make", "makes", "be", "by", "from", "into", "at", "as", "its", "their",
@@ -136,6 +140,15 @@ function bagLen(p: [string, number][]): number {
  * byte-identical sidecar.
  */
 export function writeAskIndex(outDir: string, graph: GraphV1): string {
+  const index = buildAskIndex(graph);
+  const outPath = askIndexPath(outDir);
+  mkdirSync(dirname(outPath), { recursive: true });
+  writeFileSync(outPath, JSON.stringify(index) + "\n");
+  return outPath;
+}
+
+/** The sidecar as an object — shared by `writeAskIndex` and the per-scope shards. */
+export function buildAskIndex(graph: GraphV1): AskIndex {
   const nodes = [...graph.nodes].sort((a, b) => a.id.localeCompare(b.id));
   const docs: AskIndexDoc[] = [];
   const df = new Map<string, number>();
@@ -156,18 +169,13 @@ export function writeAskIndex(outDir: string, graph: GraphV1): string {
     ? docs.reduce((a, d) => a + bagLen(d.body), 0) / docs.length
     : 0;
 
-  const index: AskIndex = {
+  return {
     version: 1,
     avgBodyLen,
     df: pairs(df),
     docCount: nodes.length,
     docs,
   };
-
-  const outPath = askIndexPath(outDir);
-  mkdirSync(dirname(outPath), { recursive: true });
-  writeFileSync(outPath, JSON.stringify(index) + "\n");
-  return outPath;
 }
 
 /** Read the ask sidecar. Returns null on a missing file, unparseable JSON, an
@@ -176,7 +184,11 @@ export function writeAskIndex(outDir: string, graph: GraphV1): string {
  * otherwise silently skew IDF) — any of which means the caller should fall
  * back to live tokenization, never crash or trust bad data. */
 export function readAskIndex(outDir: string): AskIndex | null {
-  const path = askIndexPath(outDir);
+  return readAskIndexFile(askIndexPath(outDir));
+}
+
+/** `readAskIndex` for an explicit file — the per-scope shards live elsewhere. */
+export function readAskIndexFile(path: string): AskIndex | null {
   if (!existsSync(path)) return null;
   try {
     const raw = JSON.parse(readFileSync(path, "utf8"));

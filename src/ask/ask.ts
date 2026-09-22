@@ -19,6 +19,7 @@ import matter from "gray-matter";
 import { contextDirFor } from "../context/node-file.js";
 import { withSavings, savingsFor, savingsTurnNudge, type Savings } from "../context/savings.js";
 import { loadGraphCached, loadAskIndexCached } from "../graph/load.js";
+import { openStore } from "../graph/store.js";
 import {
   assertPrefixIndexed,
   pathUnderPrefix,
@@ -162,7 +163,7 @@ interface Corpus {
   askIndex: AskIndex | null;
 }
 
-function loadCorpus(outDir: string): Corpus {
+function loadCorpus(outDir: string, inPrefix?: string, query?: string): Corpus {
   const concepts: Corpus["concepts"] = [];
   if (existsSync(outDir)) {
     for (const entry of readdirSync(outDir)) {
@@ -186,7 +187,22 @@ function loadCorpus(outDir: string): Corpus {
       });
     }
   }
-  return { concepts, graph: loadGraphCached(outDir), askIndex: loadAskIndexCached(outDir) };
+  // SQLite store (fork): scoped → the scope's subgraph and sidecar slice; unscoped →
+  // only the candidates the query's tokens can reach. Falls back to the JSON files.
+  const store = openStore(outDir);
+  if (store) {
+    if (inPrefix) {
+      const graph = loadGraphCached(outDir, inPrefix);
+      return { concepts, graph, askIndex: graph ? store.askIndexFor(graph) : null };
+    }
+    if (query !== undefined) {
+      const q = new Map([...counts(tokenize(query)).keys()].map((t) => [t, 1]));
+      const terms = [...expandQuery(q, query).keys()];
+      const { graph, askIndex } = store.candidateCorpus(terms, subjectWords(query));
+      return { concepts, graph, askIndex };
+    }
+  }
+  return { concepts, graph: loadGraphCached(outDir, inPrefix), askIndex: loadAskIndexCached(outDir, inPrefix) };
 }
 
 /** Score a document's token counts against the query counts (name field
@@ -224,6 +240,21 @@ export function isExamplePath(path: string): boolean {
   return /(^|\/)(examples?|samples?|demos?|__demo__|__demos__|fixtures|playground|sandbox)\//i.test(path || "");
 }
 const EXAMPLE_RANK_PENALTY = 0.5;
+
+/** Docs and config are indexed so a switch that lives in a values.yaml or a README is
+ * reachable — but a code question wants the code first. A heading that repeats the
+ * subject ("## LLM Gateway") or a k8s manifest key that appears in forty files would
+ * otherwise crowd the definition out of the top five (measured on the first fork
+ * build: five `build-ec-mgmt` yaml keys above `BuildECMgmtController`). The penalty
+ * lifts when the query itself asks for docs or config. */
+export function isDocPath(path: string): boolean {
+  return /\.(md|mdx|rst|txt)$/i.test(path || "");
+}
+export function isConfigPath(path: string): boolean {
+  return /\.(ya?ml|toml|properties|ini|env)$/i.test(path || "");
+}
+const DOC_RANK_PENALTY = 0.4;
+const CONFIG_RANK_PENALTY = 0.6;
 
 /** Presence-only bag (every count → 1). Path tokens are scored this way: a directory
  * name repeated along a path (`webAccessTokens/tokenConfiguration` → "token"×3) was
@@ -583,10 +614,21 @@ function lexical(
   // source it exercises — the "tests ranked above the actual code" trap.
   const wantsTests = /\b(tests?|specs?|coverage|assert(?:ion)?s?|fixtures?|mocks?)\b/i.test(query);
   const wantsExamples = /\b(examples?|samples?|demos?|fixtures?)\b/i.test(query);
-  const testFactor = (path: string): number =>
+  const wantsDocs = /\b(docs?|documentation|readme|guide|adr|runbook|changelog)\b/i.test(query);
+  const wantsConfig = /\b(config|configuration|helm|values|chart|manifest|yaml|yml|env|deployment|k8s|kubernetes)\b/i.test(query);
+  // Two families of penalty. `codeFactor` keeps tests, generated bundles and examples
+  // below the implementation even when they are the stronger lexical match (#37).
+  // `textFactor` keeps docs and config below code for a code question — but yields to
+  // an exact identifier match (see `pathFactor`), because a config key asked for by its
+  // exact name IS the answer.
+  const codeFactor = (path: string): number =>
     (!wantsTests && isTestPath(path) ? TEST_RANK_PENALTY : 1) *
     (isGeneratedPath(path) ? GENERATED_RANK_PENALTY : 1) *
     (!wantsExamples && isExamplePath(path) ? EXAMPLE_RANK_PENALTY : 1);
+  const textFactor = (path: string): number =>
+    (!wantsDocs && isDocPath(path) ? DOC_RANK_PENALTY : 1) *
+    (!wantsConfig && isConfigPath(path) ? CONFIG_RANK_PENALTY : 1);
+  const testFactor = (path: string): number => codeFactor(path) * textFactor(path);
 
   // ── Pass 1: tokenize every scored field once, and collect per-document token
   // bags so IDF can down-weight words that occur across the whole corpus. `--in`
@@ -680,6 +722,17 @@ function lexical(
   // a symbol name (same reasoning as `strongShare`).
   const nameBoost = (n: { kind: string }, name: Map<string, number>): number =>
     n.kind === "file" ? 1 : 1 + matchedIdfShare(q, [name], idf, dfltIdf);
+  // When the query IS the identifier — every query term is in the symbol's name — the
+  // user typed the thing they want, wherever it lives: a config key `use_llm_gw` asked
+  // for as "USE_LLM_GW" must not sit under a same-tokened function because it is in a
+  // values.yaml. Tests keep their penalty even then (#37): the implementation of the
+  // typed name still beats its test.
+  const exactName = (name: Map<string, number>): boolean =>
+    q.size >= 2 && matchedIdfShare(q, [name], idf, dfltIdf) >= 0.999;
+  // An exact match in config still yields a hair to an exact match in code (0.9): the
+  // Python constant that READS `USE_LLM_GW` outranks the four values.yaml keys that set it.
+  const pathFactor = (path: string, name: Map<string, number> | undefined): number =>
+    name && exactName(name) ? codeFactor(path) * (textFactor(path) < 1 ? 0.9 : 1) : testFactor(path);
   const matchedOf = new Map<AskHit, number>();
   // Parallel to matchedOf, but over NAME+PATH only (body dropped) — the
   // match-strength signal exported as `coverageStrong`.
@@ -816,7 +869,7 @@ function lexical(
           // per-scope now; the statistics are global.
           const out = new Map<string, number>();
           for (const { n, name, path, body } of docs) {
-            const factor = testFactor(n.path);
+            const factor = pathFactor(n.path, name);
             const total =
               (score(qs, name, idf) * 3 +
                 score(q, path, idf) * 2 +
@@ -853,7 +906,7 @@ function lexical(
             ? personalizedPageRankPrepared(topology, seeds)
             : new Map<string, number>();
         },
-        rankFactor: (_s, id) => testFactor(byId.get(id)?.path ?? ""),
+        rankFactor: (_s, id) => pathFactor(byId.get(id)?.path ?? "", docsById.get(id)?.name),
         collapseCandidates: fileComplement
           ? (candidates) => {
               collapsedComponents = [...candidates];
@@ -1000,7 +1053,7 @@ function lexical(
   for (const { n, name, path, body } of symbolDocs) {
     // Name and path are short identifiers → plain idf-weighted overlap; the body
     // is length-normalized via BM25 so long definitions don't win on bulk.
-    const factor = testFactor(n.path);
+    const factor = pathFactor(n.path, name);
     const total =
       (score(qs, name, idf) * 3 +
         score(q, path, idf) * 2 +
@@ -1048,7 +1101,7 @@ function lexical(
     if (!n) continue;
     const lexical = maxLex > 0 ? (lex.get(id) ?? 0) / maxLex : 0;
     const graphScore = pr.get(id) ?? 0;
-    const rankFactor = testFactor(n.path);
+    const rankFactor = pathFactor(n.path, docsById.get(n.id)?.name);
     // Apply the test penalty after normalization too. Applying it only to the
     // raw lexical score is not enough: if a test is still the strongest raw
     // match, dividing by maxLex restores it to 1.0 and erases the de-rank.
@@ -1406,7 +1459,9 @@ export function ask(dir: string, query: string, opts: AskOptions = {}): AskResul
   const root = resolve(dir);
   const outDir = contextDirFor(root, opts.contextDir);
   const limit = opts.limit ?? 8;
-  const corpus = loadCorpus(outDir);
+  // Normalized here (see the comment below) so the corpus load can pick the scope's shard.
+  const inPrefix = opts.in ? normalizePathPrefix(opts.in) : undefined;
+  const corpus = loadCorpus(outDir, inPrefix, query);
   const graphRank = opts.graphRank ?? true;
   const fileFirst = opts.fileFirst ?? true;
   // The production path uses bounded file scoring plus an exact baseline top lock.
@@ -1420,7 +1475,6 @@ export function ask(dir: string, query: string, opts: AskOptions = {}): AskResul
   // suggestion always includes the slash, so rejecting it would make the tool's
   // own suggested next command fail — and `--in frontend\sub` must work too,
   // because that is what a Windows shell's tab-completion produces.
-  const inPrefix = opts.in ? normalizePathPrefix(opts.in) : undefined;
 
   // `--in` validated up front, before any mode runs.
   if (inPrefix && corpus.graph) assertPrefixIndexed(corpus.graph, inPrefix);
@@ -1526,7 +1580,10 @@ export interface SkeletonResult {
  * `file` is matched as an exact repo-relative path, then as a basename. */
 export function skeleton(dir: string, file: string, opts: { contextDir?: string } = {}): SkeletonResult {
   const outDir = contextDirFor(resolve(dir), opts.contextDir);
-  const graph = loadGraphCached(outDir);
+  // The file path is its own scope hint: a repo-relative path lands in that repo's shard,
+  // and with the SQLite store only that file's rows are read.
+  const store = openStore(outDir);
+  const graph = store ? store.fileGraph(file) : loadGraphCached(outDir, file.includes("/") ? file : undefined);
   if (!graph) return { file, entries: [], note: "no wiring graph — run `graft build` first" };
 
   let defs = graph.nodes.filter((n) => n.kind !== "file" && n.path === file);

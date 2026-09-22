@@ -301,6 +301,12 @@ const CALL_TYPES: Record<Language, ReadonlySet<string>> = {
   r: new Set(["call"]),
 };
 
+/** AngularJS module registrars whose first string argument names the unit the
+ * file defines — `mod.command('x', [...])`, `app.service('y', ...)`. */
+const ANGULAR_REGISTRARS: ReadonlySet<string> = new Set([
+  "command", "service", "factory", "controller", "directive", "filter", "provider", "component", "constant", "value",
+]);
+
 const FUNCTION_VALUE_TYPES = new Set([
   "arrow_function",
   "function",
@@ -625,8 +631,12 @@ function walk(node: Parser.SyntaxNode, ctx: WalkCtx, out: NodeV1[], edges: RawEd
     if (ctx.lang === "php") edges.push(...phpAttributeReferenceEdges(node, id, ctx));
     if (ctx.lang === "java") edges.push(...javaAnnotationReferenceEdges(node, id, ctx));
 
+    // An AngularJS registrar unit (`mod.service('$command', […])`) owns the
+    // `this.x = function` methods inside it the way a class owns its methods, so
+    // `this.create()` within it resolves through the owner-qualified index.
+    const ngUnit = (ctx.lang === "typescript" || ctx.lang === "tsx") && desc.kind === "module";
     const enclosingClass =
-      desc.kind === "class" || javaTypeDecl || kotlinTypeDecl || swiftTypeDecl
+      desc.kind === "class" || javaTypeDecl || kotlinTypeDecl || swiftTypeDecl || ngUnit
         ? desc.name
         : isGoMethod
           ? goReceiverType(node)
@@ -1142,6 +1152,20 @@ function describe(node: Parser.SyntaxNode, ctx: WalkCtx): DefDescriptor | null {
     };
   }
 
+  // Python module-level constants: `USE_LLM_GW = os.environ.get("USE_LLM_GW", "False")`.
+  // The switches a code question turns on live here, and as residual text of the file
+  // node they were findable only by luck (benchmark run 7, Q1). UPPER_SNAKE names at
+  // module scope only — a loop variable or a local is not a symbol.
+  if (ctx.lang === "python" && node.type === "expression_statement" && ctx.enclosingKind === null) {
+    const a = node.namedChild(0);
+    if (a?.type === "assignment") {
+      const left = a.childForFieldName("left");
+      if (left?.type === "identifier" && /^[A-Z][A-Z0-9_]{2,}$/.test(left.text)) {
+        return { name: left.text, kind: "constant", headerEnd: node.endIndex, hashNode: node };
+      }
+    }
+  }
+
   const mapped = ctx.kinds[node.type];
   if (mapped) {
     const name = node.childForFieldName("name")?.text;
@@ -1158,6 +1182,41 @@ function describe(node: Parser.SyntaxNode, ctx: WalkCtx): DefDescriptor | null {
     }
     const body = node.childForFieldName("body");
     return { name, kind, headerEnd: body ? body.startIndex : node.endIndex, hashNode: node };
+  }
+
+  // JS (AngularJS-era): `this.foo = function () {}` / `me.foo = () => …` /
+  // `Ctor.prototype.foo = function` / `exports.foo = function`. Pre-ES-module
+  // code defines most of its API this way; without a node for it `skeleton` showed
+  // a $translate stub for a 70-line command file and `callers` had nothing to hang
+  // an edge on (benchmark run 10 on PrismWebClient, B2/B3).
+  if ((ctx.lang === "typescript" || ctx.lang === "tsx") && node.type === "assignment_expression") {
+    const left = node.childForFieldName("left");
+    const right = node.childForFieldName("right");
+    if (left?.type === "member_expression" && right && FUNCTION_VALUE_TYPES.has(right.type)) {
+      const prop = left.childForFieldName("property");
+      const name = prop?.type === "property_identifier" ? prop.text : undefined;
+      if (name) {
+        const rbody = right.childForFieldName("body");
+        return { name, kind: "method", headerEnd: rbody ? rbody.startIndex : node.endIndex, hashNode: node };
+      }
+    }
+  }
+
+  // JS (AngularJS-era): `mod.command('exportToPDF', [deps…, function () {…}])`,
+  // `mod.service('$command', […])`, `app.controller('X', …)`. The string names
+  // the unit the file defines; making it a node gives the `this.x = function`
+  // methods inside an owner and lets `skeleton` list the file's real API.
+  if ((ctx.lang === "typescript" || ctx.lang === "tsx") && node.type === "call_expression") {
+    const callee = node.childForFieldName("function");
+    const args = node.childForFieldName("arguments");
+    if (callee?.type === "member_expression" && args) {
+      const prop = callee.childForFieldName("property");
+      const first = args.namedChild(0);
+      if (prop && ANGULAR_REGISTRARS.has(prop.text) && first?.type === "string" && args.namedChildCount >= 2) {
+        const name = first.text.slice(1, -1);
+        if (name) return { name, kind: "module", headerEnd: args.startIndex, hashNode: node };
+      }
+    }
   }
 
   // TS: `const foo = (…) => …` / `const foo = function () {}`

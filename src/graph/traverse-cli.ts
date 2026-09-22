@@ -16,6 +16,8 @@ import { fileReader, referenceLine, wordRe } from "../blast/evidence.js";
 import { contextDirFor } from "../context/node-file.js";
 import { withSavings, savingsFor, type Savings } from "../context/savings.js";
 import { loadGraphCached } from "./load.js";
+import { normalizePathPrefix } from "../util/paths.js";
+import { openStore } from "./store.js";
 import { resolveSymbol, edgeWalk, type Direction, type EdgeHit } from "./traverse.js";
 import type { GraphV1, NodeV1 } from "./types.js";
 
@@ -166,7 +168,13 @@ function resolveDirection(raw: string | undefined): Direction {
 export function runCallersCommand(query: string, dir: string, opts: CallersCliOptions): void {
   const root = resolve(dir);
   const contextDir = contextDirFor(root, opts.globalDir);
-  const graph = loadGraphCached(contextDir);
+  // SQLite store (fork): only the symbol's neighbourhood is read, not the whole graph.
+  const store = openStore(contextDir);
+  const inPrefix = opts.in ? normalizePathPrefix(opts.in) : undefined;
+  const wantDepth = opts.depth !== undefined && /^(all|full|max)$/i.test(opts.depth) ? Number.POSITIVE_INFINITY : Number(opts.depth ?? DEFAULT_DEPTH) || DEFAULT_DEPTH;
+  const graph = store
+    ? store.symbolNeighborhood(query, resolveDirection(opts.direction), wantDepth, inPrefix)
+    : loadGraphCached(contextDir, inPrefix);
   if (!graph) {
     console.error(`✗ no graph found at ${contextDir} — run \`graft build\` first`);
     process.exit(1);

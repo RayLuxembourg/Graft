@@ -25,7 +25,9 @@
  */
 import { statSync } from "node:fs";
 import { readGraph, wiringPath } from "./write.js";
-import { readAskIndex, askIndexPath, type AskIndex } from "../ask/index-file.js";
+import { readAskIndex, readAskIndexFile, askIndexPath, type AskIndex } from "../ask/index-file.js";
+import { shardFor, shardWiringPath, shardAskIndexPath } from "./shards.js";
+import { openStore, storePath } from "./store.js";
 import type { GraphV1 } from "./types.js";
 
 interface CacheEntry<T> {
@@ -61,8 +63,9 @@ function loadCached<T>(
   path: string,
   parse: () => T | null,
   onParse: () => void,
+  statPath: string = path,
 ): T | null {
-  const st = statOf(path);
+  const st = statOf(statPath);
   if (!st) {
     // Missing file: don't negatively cache, and drop any stale entry so a
     // subsequently-created file at the same path is re-parsed, not served
@@ -83,8 +86,21 @@ function loadCached<T>(
 /** Cached `readGraph(wiringPath(outDir))` — same null-on-missing/unparseable
  * semantics, re-reads only when the wiring file's `(mtimeMs, size)` changed.
  * Returns a shared cached reference; callers must not mutate the returned graph. */
-export function loadGraphCached(outDir: string): GraphV1 | null {
-  const path = wiringPath(outDir);
+export function loadGraphCached(outDir: string, inPrefix?: string): GraphV1 | null {
+  // Scoped query → the SQLite store's scope subgraph when the build wrote one
+  // (fork), else that scope's JSON shard, else the full graph — so an old build
+  // behaves exactly as before.
+  if (inPrefix) {
+    const store = openStore(outDir);
+    if (store) {
+      const key = `${storePath(outDir)}#${inPrefix}`;
+      return loadCached(graphCache, key, () => store.scopeGraph(inPrefix), () => {
+        __parseCount.graph++;
+      }, storePath(outDir));
+    }
+  }
+  const shard = shardFor(outDir, inPrefix);
+  const path = shard ? shardWiringPath(outDir, shard.slug) : wiringPath(outDir);
   return loadCached(graphCache, path, () => readGraph(path), () => {
     __parseCount.graph++;
   });
@@ -92,9 +108,10 @@ export function loadGraphCached(outDir: string): GraphV1 | null {
 
 /** Cached `readAskIndex(outDir)` — same semantics, keyed on the sidecar file.
  * Returns a shared cached reference; callers must not mutate the returned index. */
-export function loadAskIndexCached(outDir: string): AskIndex | null {
-  const path = askIndexPath(outDir);
-  return loadCached(askIndexCache, path, () => readAskIndex(outDir), () => {
+export function loadAskIndexCached(outDir: string, inPrefix?: string): AskIndex | null {
+  const shard = shardFor(outDir, inPrefix);
+  const path = shard ? shardAskIndexPath(outDir, shard.slug) : askIndexPath(outDir);
+  return loadCached(askIndexCache, path, () => (shard ? readAskIndexFile(path) : readAskIndex(outDir)), () => {
     __parseCount.askIndex++;
   });
 }

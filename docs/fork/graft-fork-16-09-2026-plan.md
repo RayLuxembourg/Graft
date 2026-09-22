@@ -36,14 +36,46 @@ config.
 
 ## Steps
 
-- [ ] 1a port index-file.ts (+ tests)
-- [ ] 1b port ask.ts (+ tests)
-- [ ] 1c port scopes.ts (+ test)
-- [ ] 2 GENERIC_LANGS rows + queries: groovy, bash, sql, hcl, proto
-- [ ] 3 GENERIC_LANGS rows + queries: markdown, yaml
-- [ ] 4 drift threshold in refresh.ts (+ test)
-- [ ] 5 version/CHANGELOG, build, test, global install, index rebuild, try 6, brief update
-- [ ] 6 brain: sync_repos.sh drops apply.py (source now carries the patches); notes updated
+- [DONE] 1a port index-file.ts (+ tests) — `stem`, `tokenizeName`, stopwords; `test/fork-ranking.test.ts`
+- [DONE] 1b port ask.ts (+ tests) — plus `isDocPath`/`isConfigPath` penalties added after the first fork build
+- [DONE] 1c port scopes.ts (+ test) — `.git` marker, root excluded (broke graph-scopes #39 otherwise)
+- [DONE] 2 GENERIC_LANGS rows + queries: groovy, bash, sql, hcl, proto — node names from `scripts/probe-grammar.mjs`
+- [DONE] 3 GENERIC_LANGS rows + queries: markdown, yaml — yaml limited to two key levels, see Decisions
+- [DONE] 4 drift threshold in refresh.ts (+ test) — `GRAFT_INLINE_REFRESH_MAX`, default 25
+- [DONE] 5a version `0.18.0-sisense.1`, CHANGELOG, build, tests (1235 pass; 4 claude-shim-resolve fail on pristine too — environmental)
+- [DONE] 5b global install, index rebuild (3×: 280s / 234s / 242s), latency 20–31s → ~7.5s, try 6
+  (13 calls · 80.9s tool · 18.5k tool tok · 53.5k agent tok · Q1 partial, Q2–Q4 full, Q5 partial
+  with an arm false negative — deterministic probes find be-services), brief updated in
+  `~/brain/verification/2026-09-16-graft-vs-knowledge-mcp-run-7-…`
+
+## Next
+
+- [DONE] 10 SQLite store (`src/graph/store.ts`, `test/fork-store.test.ts`): query paths read rows, not the whole graph. Ray accepted the SQLite-over-vector-DB proposal 2026-09-22.
+
+- [DONE] 9 per-scope shards (`src/graph/shards.ts`, `test/fork-shards.test.ts`): scoped CLI calls stop parsing the 398 MB graph + 229 MB sidecar per invocation.
+
+- [DONE] 7 `grep --in` latency: `symbolsOf` scanned all nodes per file (O(files × nodes)); now one `symbolsByPath` pass — 62 s → 2.2 s on PrismWebClient (run 10 → 11).
+- [DONE] 8 AngularJS shapes: member-assigned functions → `method`, registrar call → `module` owner, JS unique-method member-call resolution (`test/fork-angularjs.test.ts`, 3 pass; suite 1241 pass / 4 environmental).
+- `blast --base` fails on the unified index for a nested repo (git runs at the index root). `map` rejects `--in`.
+
+- Per-call latency is ~7.5s vs 5.5s stock: the graph is 290k nodes (27k markdown headings, 31k
+  yaml keys) and a query loads wiring.json (347 MB) + the sidecar (204 MB) from disk. A compact
+  binary or per-scope sidecar would take most of it back.
+- Collapse identical `(scope, kind, name)` hits into one row with "+N files" (four `use_llm_gw`
+  values.yaml keys ate four of five slots on `USE_LLM_GW`).
+- Python module constants are in; TS `export const X = process.env…` should get the same
+  treatment where the depth tier does not already emit them.
+- [DONE] 6 brain: `apply.py` exits on a fork version; reference + known-issue notes updated
+
+## Runtime findings
+
+- **First fork build (2026-09-16 23:xx): 221k → 527k nodes, 314MB sidecar, queries 20–31s (was 5–6s).**
+  yaml alone was 237k nodes: `pnpm-lock.yaml` ×3 = 51k, kube-prometheus CRDs 6–8k each, every
+  nested key a symbol. Docs/config headings also out-ranked code (`build-ec-mgmt` yaml keys ×5
+  above `BuildECMgmtController`). Fixes in the same branch: lockfiles/source maps skipped at the
+  walk (`SKIP_FILES` in ingest/fs.ts), yaml symbols only at key depth ≤ 2 with the capture on the
+  pair, per-language body caps (markdown 1500, yaml 300 chars), ×0.4 / ×0.6 rank penalties for
+  doc / config nodes unless the query asks for docs or config.
 
 ## Decisions
 
