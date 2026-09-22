@@ -98,6 +98,10 @@ export interface AskRankingMetadata {
 /** Max source lines to inline per hit — a definition longer than this is
  * truncated with a marker, so one giant function can't blow up the pack. */
 const MAX_SPAN_LINES = 40;
+/** The #1 hit gets a wider window (fork): it is the span the agent acts on. */
+const TOP_HIT_SPAN_LINES = 80;
+/** Lines kept from the END of a span that exceeds its cap (fork). */
+const TAIL_LINES = 10;
 /** A minified line can be 100k chars; this caps what one inlined line may add to the
  * pack. Hand-written code essentially never exceeds it. */
 const MAX_LINE_CHARS = 240;
@@ -1388,7 +1392,7 @@ function parseSpan(pointer: string): { path: string; from: number; to: number } 
 
 /** Read the source lines [from, to] (1-indexed, inclusive) of `path` under `root`,
  * capped at {@link MAX_SPAN_LINES}. Returns null if the file can't be read. */
-function sliceSpan(root: string, path: string, from: number, to: number): string | null {
+function sliceSpan(root: string, path: string, from: number, to: number, cap: number = MAX_SPAN_LINES): string | null {
   try {
     const source = readSourceFile(join(root, path));
     if (source === null) return null; // unsupported encoding (e.g. UTF-16BE)
@@ -1398,9 +1402,18 @@ function sliceSpan(root: string, path: string, from: number, to: number): string
     const slice = lines
       .slice(start - 1, end)
       .map((l) => (l.length > MAX_LINE_CHARS ? l.slice(0, MAX_LINE_CHARS) + " …(line truncated)" : l));
-    if (slice.length > MAX_SPAN_LINES) {
-      const head = slice.slice(0, MAX_SPAN_LINES);
-      head.push(`… (+${slice.length - MAX_SPAN_LINES} more lines; open ${path}:L${start}-L${end})`);
+    if (slice.length > cap) {
+      // Head AND tail (fork): a definition's decision usually sits at its end — the
+      // `canExecute` of a 66-line AngularJS command, the `return`, the URL a helper
+      // builds last. A head-only window hid `dashboards.export_pdf` at L66 of a
+      // L4-L70 command in four benchmark runs. The omitted middle is named by line.
+      const tailN = Math.min(TAIL_LINES, Math.floor(cap / 4));
+      const headN = cap - tailN;
+      const omittedFrom = start + headN;
+      const omittedTo = end - tailN;
+      const head = slice.slice(0, headN);
+      head.push(`… (L${omittedFrom}-L${omittedTo} omitted, ${omittedTo - omittedFrom + 1} lines; open ${path}:L${start}-L${end})`);
+      head.push(...slice.slice(slice.length - tailN));
       return head.join("\n");
     }
     return slice.join("\n");
@@ -1428,7 +1441,8 @@ function inlineSource(root: string, hits: AskHit[], graph: GraphV1 | null, full:
       h.code = `${crux}\n… (crux — full definition at ${h.pointer}; rerun with --full)`;
       continue;
     }
-    const code = sliceSpan(root, s.path, s.from, s.to);
+    // The top hit is the one the agent will act on: give it a wider window.
+    const code = sliceSpan(root, s.path, s.from, s.to, h === hits[0] ? TOP_HIT_SPAN_LINES : MAX_SPAN_LINES);
     if (code) h.code = code;
   }
 }
