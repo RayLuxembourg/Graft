@@ -32,14 +32,17 @@ test("yaml symbols stop at the second level of keys", async () => {
   assert.deepEqual(r.nodes.filter((n) => n.kind !== "file").map((n) => n.name).sort(), ["a", "b", "d", "e"]);
 });
 
-const LANGS = ["groovy", "bash", "sql", "hcl", "proto", "markdown", "yaml"];
+const LANGS = ["groovy", "bash", "sql", "hcl", "proto", "markdown", "yaml", "json"];
 
 test("every added extension routes to its generic language", () => {
   const cases: Record<string, string> = {
     "vars/GlobalVars.groovy": "groovy", "build.gradle": "groovy", "ci/run.sh": "bash",
     "db/schema.sql": "sql", "infra/main.tf": "hcl", "api/v1.proto": "proto",
     "docs/INFRA.md": "markdown", "charts/values.yaml": "yaml", ".gitlab-ci.yml": "yaml",
+    "libs/sdk-assistant/package.json": "json",
   };
+  assert.equal(genericLangOf("fixtures/data.json"), null, "general JSON stays out of the index");
+  assert.equal(genericLangOf("package-lock.json"), null);
   for (const [p, lang] of Object.entries(cases)) assert.equal(genericLangOf(p)?.name, lang, p);
 });
 
@@ -70,6 +73,9 @@ test("the grammars load and each query yields the declarations a code question w
   // the body of a yaml key node carries its value, so `ask` matches on the value too
   const pair = extractGeneric("charts/values.yaml", "use_llm_gw: true\n", "yaml").nodes.find((n) => n.name === "use_llm_gw");
   assert.ok(pair?.body_text?.includes("true"));
+  // package.json: top-level keys and every dependency name are symbols
+  const pkg = names("libs/sdk-assistant/package.json", '{\n  "name": "@sisense/sdk-assistant",\n  "dependencies": {\n    "@sisense/sdk-ai-core": "workspace:*",\n    "react": "^18"\n  }\n}\n', "json");
+  assert.deepEqual(pkg.sort(), ["variable:@sisense/sdk-ai-core", "variable:dependencies", "variable:name", "variable:react"]);
   // proto ships no query yet: the node-kind walker still yields the message
   const proto = names("api/v1.proto", 'syntax = "proto3";\nmessage StartBuildRequest {\n  string data_source_id = 1;\n}\n', "proto");
   assert.ok(proto.length >= 1, "proto walker produced no symbols");

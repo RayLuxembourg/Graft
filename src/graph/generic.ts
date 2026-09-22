@@ -71,6 +71,8 @@ export const GENERIC_LANGS: readonly GenericLang[] = [
   { name: "proto", exts: [".proto"], wasm: "proto" },
   { name: "markdown", exts: [".md", ".mdx"], wasm: "markdown" },
   { name: "yaml", exts: [".yaml", ".yml"], wasm: "yaml" },
+  // package.json only (the "extension" is the basename): dependency names as symbols — see json.scm.
+  { name: "json", exts: ["package.json"], wasm: "json" },
 ];
 
 const byExt = new Map<string, GenericLang>();
@@ -234,7 +236,7 @@ interface Def { id: string; startIndex: number; endIndex: number }
  * document, and the sidecar stores every token of it. */
 function bodyCapFor(langName: string): number {
   if (langName === "markdown") return 1500;
-  if (langName === "yaml") return 300;
+  if (langName === "yaml" || langName === "json") return 300;
   return 5000;
 }
 
