@@ -23,6 +23,10 @@ function addFiles(d: string, n: number): void {
   for (let i = 0; i < n; i++) writeFileSync(join(d, "src", `gen${i}.ts`), `export const g${i} = ${i};\n`);
 }
 
+// GRAFT_NO_REFRESH=1 is set machine-wide in ~/.claude/settings.json (2026-09-22); these tests
+// exercise the refresh path itself, so the switch must be off for them.
+delete process.env.GRAFT_NO_REFRESH;
+
 test("a small drift still refreshes inline", async () => {
   const d = repo();
   try {
