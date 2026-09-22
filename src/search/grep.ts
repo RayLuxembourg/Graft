@@ -95,16 +95,26 @@ interface SymbolSpan {
   end: number;
 }
 
-/** The file's symbol nodes, sorted ascending by span start — the order
- * `enclosingSymbol` scans in to find the innermost containing span. */
-function symbolsOf(graph: GraphV1, path: string): SymbolSpan[] {
-  const out: SymbolSpan[] = [];
+/** Symbol nodes grouped by file path, each list sorted ascending by span
+ * start — the order `enclosingSymbol` scans in to find the innermost
+ * containing span. Built in ONE pass over `graph.nodes`, restricted to the
+ * files being searched: the previous per-file scan of every node made a
+ * repo-scoped grep on a 290k-node workspace graph O(files × nodes) — 62 s for
+ * one PrismWebClient grep, 25 s for its `src/`, 1 s for one module. */
+function symbolsByPath(graph: GraphV1, paths: Set<string>): Map<string, SymbolSpan[]> {
+  const out = new Map<string, SymbolSpan[]>();
   for (const n of graph.nodes) {
-    if (n.kind === "file" || n.path !== path) continue;
+    if (n.kind === "file" || !paths.has(n.path)) continue;
     const b = spanBounds(n.span);
-    if (b) out.push({ node: n, start: b.start, end: b.end });
+    if (!b) continue;
+    let list = out.get(n.path);
+    if (!list) {
+      list = [];
+      out.set(n.path, list);
+    }
+    list.push({ node: n, start: b.start, end: b.end });
   }
-  out.sort((a, b) => a.start - b.start);
+  for (const list of out.values()) list.sort((a, b) => a.start - b.start);
   return out;
 }
 
@@ -157,6 +167,8 @@ export function grepGraph(graph: GraphV1, repoRoot: string, pattern: string, opt
   let truncatedHits = 0;
   let truncatedFiles = 0;
 
+  const symbolIndex = symbolsByPath(graph, new Set(fileNodes.map((f) => f.path)));
+
   for (const file of fileNodes) {
     let text: string;
     try {
@@ -171,7 +183,7 @@ export function grepGraph(graph: GraphV1, repoRoot: string, pattern: string, opt
       continue;
     }
 
-    const symbols = symbolsOf(graph, file.path);
+    const symbols = symbolIndex.get(file.path) ?? [];
     const lines = text.split("\n");
 
     for (let i = 0; i < lines.length; i++) {
