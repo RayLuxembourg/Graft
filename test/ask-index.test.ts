@@ -18,6 +18,7 @@ import { ask } from "../src/ask/ask.js";
 import { contextDirFor } from "../src/context/node-file.js";
 import { readGraph, wiringPath } from "../src/graph/write.js";
 import { askIndexPath, readAskIndex, tokenize, tokenizeName, stem, counts, writeAskIndex } from "../src/ask/index-file.js";
+import { storePath } from "../src/graph/store.js";
 import { extractFile, languageOf } from "../src/graph/extract.js";
 import type { GraphV1, NodeV1 } from "../src/graph/types.js";
 
@@ -140,6 +141,8 @@ test("ask results are IDENTICAL with and without the sidecar (same hits, same sc
     // sidecar's numbers?
     reinjectBodyText(dir, outDir);
     const idxPath = askIndexPath(outDir);
+    // these tests exercise the JSON sidecar fallback; the SQLite store (fork) would answer first
+    rmSync(storePath(outDir), { force: true });
 
     const withIndex = ask(dir, QUERY, { source: false });
     assert.ok(readAskIndex(outDir), "sanity: sidecar is present for the first run");
@@ -166,6 +169,8 @@ test("unknown sidecar version falls back to live tokenization without crashing",
     const outDir = contextDirFor(dir);
     reinjectBodyText(dir, outDir); // see comment above: fallback == live tokenization only on a fat graph
     const idxPath = askIndexPath(outDir);
+    // these tests exercise the JSON sidecar fallback; the SQLite store (fork) would answer first
+    rmSync(storePath(outDir), { force: true });
 
     const live = ask(dir, QUERY, { source: false });
 
@@ -188,6 +193,8 @@ test("a stale sidecar (docCount mismatch) falls back to live tokenization", asyn
     const outDir = contextDirFor(dir);
     reinjectBodyText(dir, outDir); // see comment above: fallback == live tokenization only on a fat graph
     const idxPath = askIndexPath(outDir);
+    // these tests exercise the JSON sidecar fallback; the SQLite store (fork) would answer first
+    rmSync(storePath(outDir), { force: true });
 
     const live = ask(dir, QUERY, { source: false });
 
@@ -209,6 +216,8 @@ test("an unparseable sidecar file falls back to live tokenization", async () => 
     const outDir = contextDirFor(dir);
     reinjectBodyText(dir, outDir); // see comment above: fallback == live tokenization only on a fat graph
     const idxPath = askIndexPath(outDir);
+    // these tests exercise the JSON sidecar fallback; the SQLite store (fork) would answer first
+    rmSync(storePath(outDir), { force: true });
 
     const live = ask(dir, QUERY, { source: false });
     writeFileSync(idxPath, "{not json");
@@ -265,6 +274,8 @@ test("readAskIndex returns null when docCount doesn't match docs.length", () => 
   try {
     const outDir = contextDirFor(dir);
     const idxPath = askIndexPath(outDir);
+    // these tests exercise the JSON sidecar fallback; the SQLite store (fork) would answer first
+    rmSync(storePath(outDir), { force: true });
     mkdirSync(dirname(idxPath), { recursive: true });
     const corrupted = {
       version: 1,
@@ -285,6 +296,8 @@ test("a failed sidecar write is recorded in build errors, not fatal", async () =
   try {
     const outDir = contextDirFor(dir);
     const idxPath = askIndexPath(outDir);
+    // these tests exercise the JSON sidecar fallback; the SQLite store (fork) would answer first
+    rmSync(storePath(outDir), { force: true });
     // Pre-create the sidecar's own path AS A DIRECTORY so writeAskIndex's
     // writeFileSync fails with EISDIR — simulates any write failure without
     // needing real permission tricks.
@@ -351,6 +364,8 @@ test("ask WITHOUT sidecar on a SLIM graph: no crash, body contributions absent, 
     await buildGraph(dir); // writes a slim wiring.json + the sidecar
     const outDir = contextDirFor(dir);
     const idxPath = askIndexPath(outDir);
+    // these tests exercise the JSON sidecar fallback; the SQLite store (fork) would answer first
+    rmSync(storePath(outDir), { force: true });
     unlinkSync(idxPath); // no sidecar from here on
     assert.equal(readAskIndex(outDir), null, "sanity: sidecar is really gone");
 

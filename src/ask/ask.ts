@@ -19,6 +19,7 @@ import matter from "gray-matter";
 import { contextDirFor } from "../context/node-file.js";
 import { withSavings, savingsFor, savingsTurnNudge, type Savings } from "../context/savings.js";
 import { loadGraphCached, loadAskIndexCached } from "../graph/load.js";
+import { openStore } from "../graph/store.js";
 import {
   assertPrefixIndexed,
   pathUnderPrefix,
@@ -162,7 +163,7 @@ interface Corpus {
   askIndex: AskIndex | null;
 }
 
-function loadCorpus(outDir: string, inPrefix?: string): Corpus {
+function loadCorpus(outDir: string, inPrefix?: string, query?: string): Corpus {
   const concepts: Corpus["concepts"] = [];
   if (existsSync(outDir)) {
     for (const entry of readdirSync(outDir)) {
@@ -184,6 +185,21 @@ function loadCorpus(outDir: string, inPrefix?: string): Corpus {
         snippet,
         text: `${fm.name ?? ""} ${snippet} ${sources.join(" ")}`,
       });
+    }
+  }
+  // SQLite store (fork): scoped → the scope's subgraph and sidecar slice; unscoped →
+  // only the candidates the query's tokens can reach. Falls back to the JSON files.
+  const store = openStore(outDir);
+  if (store) {
+    if (inPrefix) {
+      const graph = loadGraphCached(outDir, inPrefix);
+      return { concepts, graph, askIndex: graph ? store.askIndexFor(graph) : null };
+    }
+    if (query !== undefined) {
+      const q = new Map([...counts(tokenize(query)).keys()].map((t) => [t, 1]));
+      const terms = [...expandQuery(q, query).keys()];
+      const { graph, askIndex } = store.candidateCorpus(terms, subjectWords(query));
+      return { concepts, graph, askIndex };
     }
   }
   return { concepts, graph: loadGraphCached(outDir, inPrefix), askIndex: loadAskIndexCached(outDir, inPrefix) };
@@ -1445,7 +1461,7 @@ export function ask(dir: string, query: string, opts: AskOptions = {}): AskResul
   const limit = opts.limit ?? 8;
   // Normalized here (see the comment below) so the corpus load can pick the scope's shard.
   const inPrefix = opts.in ? normalizePathPrefix(opts.in) : undefined;
-  const corpus = loadCorpus(outDir, inPrefix);
+  const corpus = loadCorpus(outDir, inPrefix, query);
   const graphRank = opts.graphRank ?? true;
   const fileFirst = opts.fileFirst ?? true;
   // The production path uses bounded file scoring plus an exact baseline top lock.
@@ -1564,8 +1580,10 @@ export interface SkeletonResult {
  * `file` is matched as an exact repo-relative path, then as a basename. */
 export function skeleton(dir: string, file: string, opts: { contextDir?: string } = {}): SkeletonResult {
   const outDir = contextDirFor(resolve(dir), opts.contextDir);
-  // The file path is its own scope hint: a repo-relative path lands in that repo's shard.
-  const graph = loadGraphCached(outDir, file.includes("/") ? file : undefined);
+  // The file path is its own scope hint: a repo-relative path lands in that repo's shard,
+  // and with the SQLite store only that file's rows are read.
+  const store = openStore(outDir);
+  const graph = store ? store.fileGraph(file) : loadGraphCached(outDir, file.includes("/") ? file : undefined);
   if (!graph) return { file, entries: [], note: "no wiring graph — run `graft build` first" };
 
   let defs = graph.nodes.filter((n) => n.kind !== "file" && n.path === file);

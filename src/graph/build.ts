@@ -39,6 +39,7 @@ import { readGraph, writeGraph, wiringPath } from "./write.js";
 import { writeCards, writeIndex, writeCovers, type CardStats } from "./cards.js";
 import { askIndexPath, buildAskIndex } from "../ask/index-file.js";
 import { writeShards } from "./shards.js";
+import { writeStore } from "./store.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname as pathDirname } from "node:path";
 import { discoverScopes, scopeOf } from "./scopes.js";
@@ -366,6 +367,12 @@ export async function buildGraph(
     writeShards(graph, askIndex, outDir);
   } catch (err) {
     errors.push(`shards: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  // SQLite store (fork): every query path reads only the rows it needs — see store.ts.
+  try {
+    writeStore(graph, askIndex, outDir);
+  } catch (err) {
+    errors.push(`store: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // The fingerprint claims exactly one thing: "the graph on disk was built from

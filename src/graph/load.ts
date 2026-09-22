@@ -27,6 +27,7 @@ import { statSync } from "node:fs";
 import { readGraph, wiringPath } from "./write.js";
 import { readAskIndex, readAskIndexFile, askIndexPath, type AskIndex } from "../ask/index-file.js";
 import { shardFor, shardWiringPath, shardAskIndexPath } from "./shards.js";
+import { openStore, storePath } from "./store.js";
 import type { GraphV1 } from "./types.js";
 
 interface CacheEntry<T> {
@@ -62,8 +63,9 @@ function loadCached<T>(
   path: string,
   parse: () => T | null,
   onParse: () => void,
+  statPath: string = path,
 ): T | null {
-  const st = statOf(path);
+  const st = statOf(statPath);
   if (!st) {
     // Missing file: don't negatively cache, and drop any stale entry so a
     // subsequently-created file at the same path is re-parsed, not served
@@ -85,8 +87,18 @@ function loadCached<T>(
  * semantics, re-reads only when the wiring file's `(mtimeMs, size)` changed.
  * Returns a shared cached reference; callers must not mutate the returned graph. */
 export function loadGraphCached(outDir: string, inPrefix?: string): GraphV1 | null {
-  // Scoped query → that scope's shard when the build wrote one (fork). The
-  // full graph is the fallback, so an old build behaves exactly as before.
+  // Scoped query → the SQLite store's scope subgraph when the build wrote one
+  // (fork), else that scope's JSON shard, else the full graph — so an old build
+  // behaves exactly as before.
+  if (inPrefix) {
+    const store = openStore(outDir);
+    if (store) {
+      const key = `${storePath(outDir)}#${inPrefix}`;
+      return loadCached(graphCache, key, () => store.scopeGraph(inPrefix), () => {
+        __parseCount.graph++;
+      }, storePath(outDir));
+    }
+  }
   const shard = shardFor(outDir, inPrefix);
   const path = shard ? shardWiringPath(outDir, shard.slug) : wiringPath(outDir);
   return loadCached(graphCache, path, () => readGraph(path), () => {

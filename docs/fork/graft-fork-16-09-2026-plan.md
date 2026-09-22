@@ -50,6 +50,8 @@ config.
 
 ## Next
 
+- [DONE] 10 SQLite store (`src/graph/store.ts`, `test/fork-store.test.ts`): query paths read rows, not the whole graph. Ray accepted the SQLite-over-vector-DB proposal 2026-09-22.
+
 - [DONE] 9 per-scope shards (`src/graph/shards.ts`, `test/fork-shards.test.ts`): scoped CLI calls stop parsing the 398 MB graph + 229 MB sidecar per invocation.
 
 - [DONE] 7 `grep --in` latency: `symbolsOf` scanned all nodes per file (O(files × nodes)); now one `symbolsByPath` pass — 62 s → 2.2 s on PrismWebClient (run 10 → 11).
