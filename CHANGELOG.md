@@ -7,6 +7,7 @@ Everything here was measured first on the 66-repo `~/work` index in benchmark ru
 
 ### Changed — `ask` ranking
 
+- `grep`: symbols are indexed by path in one pass instead of scanning every graph node per searched file — a repo-scoped grep on the 290k-node workspace graph drops from 62 s to 2 s (`--in frontend/PrismWebClient/`, benchmark run 10).
 - **Stemming and query-filler stopwords** in the shared tokenizer, so "tokens" meets
   `verifyAccessToken`, "calls" meets `call_litellm_azure`, and a rare filler like
   "made" no longer ranks `ChangesMadeFnOverride` first. Rebuild the index: the sidecar
