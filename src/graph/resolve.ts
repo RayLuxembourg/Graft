@@ -23,6 +23,7 @@ const IMPORT_EXTS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs
 const C_EXT = /\.(c|h|cc|cpp|cxx|hpp|hh|hxx|inl|ipp|c\+\+|h\+\+)$/i;
 /** Python source + stub extensions, for the constructor-call fallback below. */
 const PY_EXT = /\.pyi?$/i;
+const JS_EXT = /\.[cm]?js$/i;
 /** What a bare Python call falls back to when no function of that name exists:
  * construction. Only `class` — Python enums, dataclasses and NamedTuples are all
  * classes, so no other kind is reachable this way. */
@@ -269,7 +270,20 @@ export function resolveEdges(
       }
     } else if (e.relation === "calls") {
       if (e.viaMember) {
-        if (!e.recvType) continue;
+        if (!e.recvType) {
+          // JavaScript carve-out (fork): AngularJS code receives its collaborators by
+          // dependency injection — `function ($injector, jaqlSvc) { jaqlSvc.unmergeMembers() }`
+          // — so no receiver ever has a type and every member call dropped, leaving
+          // `callers` empty for the whole codebase (benchmark run 10, B2/B3). This is
+          // NOT the name fallback #35 rejected: it fires only for .js files and only
+          // when the bare name is a UNIQUE method across the reachable graph, and it
+          // is labelled `inferred`.
+          if (JS_EXT.test(e.file)) {
+            const jsHit = resolveName(e.name!, e.file, ["method"], perFileName, globalName);
+            if (jsHit && jsHit.id !== e.source) add(e.source, jsHit.id, "calls", "inferred");
+          }
+          continue;
+        }
         const hit = resolveTypedMember(e.recvType, e.name!, e.file, ownerMethod, classParents, classTraits, e.argCount);
         if (hit === "ambiguous") continue; // drop — never guess past an ambiguous owner
         if (hit) {

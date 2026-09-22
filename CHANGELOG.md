@@ -7,6 +7,7 @@ Everything here was measured first on the 66-repo `~/work` index in benchmark ru
 
 ### Changed — `ask` ranking
 
+- JavaScript (AngularJS-era) symbols: `this.x = function` / `me.x = …` / `Ctor.prototype.x = …` become `method` nodes, and a registrar call `mod.command('name', […])` / `mod.service` / `.factory` / `.controller` / `.directive` / `.filter` / `.provider` / `.component` / `.constant` / `.value` becomes a `module` node that owns them. Member calls in `.js` files with no receiver type resolve to a UNIQUE method name as an `inferred` edge (DI code never has a receiver type; without this `callers` was empty for a whole codebase — run 10, B2/B3). `skeleton` of a 70-line command file no longer shows a `$translate` stub only.
 - `grep`: symbols are indexed by path in one pass instead of scanning every graph node per searched file — a repo-scoped grep on the 290k-node workspace graph drops from 62 s to 2 s (`--in frontend/PrismWebClient/`, benchmark run 10).
 - **Stemming and query-filler stopwords** in the shared tokenizer, so "tokens" meets
   `verifyAccessToken`, "calls" meets `call_litellm_azure`, and a rare filler like

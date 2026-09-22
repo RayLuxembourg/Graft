@@ -51,7 +51,7 @@ config.
 ## Next
 
 - [DONE] 7 `grep --in` latency: `symbolsOf` scanned all nodes per file (O(files × nodes)); now one `symbolsByPath` pass — 62 s → 2.2 s on PrismWebClient (run 10 → 11).
-- `callers` has no edges for AngularJS shapes (`me.x = function`, `this.x = function` inside `mod.service([...])`, factory-inner functions); `skeleton` sees only a `$translate` stub of `mod.command([...])` and nothing of `$command.js`. Extraction gap, run 10.
+- [DONE] 8 AngularJS shapes: member-assigned functions → `method`, registrar call → `module` owner, JS unique-method member-call resolution (`test/fork-angularjs.test.ts`, 3 pass; suite 1241 pass / 4 environmental).
 - `blast --base` fails on the unified index for a nested repo (git runs at the index root). `map` rejects `--in`.
 
 - Per-call latency is ~7.5s vs 5.5s stock: the graph is 290k nodes (27k markdown headings, 31k
