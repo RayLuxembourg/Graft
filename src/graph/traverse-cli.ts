@@ -16,6 +16,7 @@ import { fileReader, referenceLine, wordRe } from "../blast/evidence.js";
 import { contextDirFor } from "../context/node-file.js";
 import { withSavings, savingsFor, type Savings } from "../context/savings.js";
 import { loadGraphCached } from "./load.js";
+import { normalizePathPrefix } from "../util/paths.js";
 import { resolveSymbol, edgeWalk, type Direction, type EdgeHit } from "./traverse.js";
 import type { GraphV1, NodeV1 } from "./types.js";
 
@@ -166,7 +167,7 @@ function resolveDirection(raw: string | undefined): Direction {
 export function runCallersCommand(query: string, dir: string, opts: CallersCliOptions): void {
   const root = resolve(dir);
   const contextDir = contextDirFor(root, opts.globalDir);
-  const graph = loadGraphCached(contextDir);
+  const graph = loadGraphCached(contextDir, opts.in ? normalizePathPrefix(opts.in) : undefined);
   if (!graph) {
     console.error(`✗ no graph found at ${contextDir} — run \`graft build\` first`);
     process.exit(1);

@@ -37,7 +37,10 @@ import { resolveEdges, type GoModule } from "./resolve.js";
 import { enrichGraph, type EnrichStats } from "./enrich.js";
 import { readGraph, writeGraph, wiringPath } from "./write.js";
 import { writeCards, writeIndex, writeCovers, type CardStats } from "./cards.js";
-import { writeAskIndex } from "../ask/index-file.js";
+import { askIndexPath, buildAskIndex } from "../ask/index-file.js";
+import { writeShards } from "./shards.js";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname as pathDirname } from "node:path";
 import { discoverScopes, scopeOf } from "./scopes.js";
 import type { GraphV1, Kind, NodeV1, Relation, ScopeV1 } from "./types.js";
 import type { CruxSummarizer } from "../ai/crux.js";
@@ -348,10 +351,21 @@ export async function buildGraph(
   // `writeGraph` strips `body_text` from what it serializes (dead weight once
   // this sidecar exists), so the nodes on disk no longer carry it — only this
   // in-memory object, still holding what `extractFile` populated, does.
+  let askIndex = null as ReturnType<typeof buildAskIndex> | null;
   try {
-    writeAskIndex(outDir, graph);
+    askIndex = buildAskIndex(graph);
+    const askPath = askIndexPath(outDir);
+    mkdirSync(pathDirname(askPath), { recursive: true });
+    writeFileSync(askPath, JSON.stringify(askIndex) + "\n");
   } catch (err) {
     errors.push(`ask-index: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  // Per-scope shards (fork): a `--in <repo>/` query loads one repo's graph and
+  // sidecar instead of the whole workspace's — see shards.ts.
+  try {
+    writeShards(graph, askIndex, outDir);
+  } catch (err) {
+    errors.push(`shards: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // The fingerprint claims exactly one thing: "the graph on disk was built from

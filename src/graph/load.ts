@@ -25,7 +25,8 @@
  */
 import { statSync } from "node:fs";
 import { readGraph, wiringPath } from "./write.js";
-import { readAskIndex, askIndexPath, type AskIndex } from "../ask/index-file.js";
+import { readAskIndex, readAskIndexFile, askIndexPath, type AskIndex } from "../ask/index-file.js";
+import { shardFor, shardWiringPath, shardAskIndexPath } from "./shards.js";
 import type { GraphV1 } from "./types.js";
 
 interface CacheEntry<T> {
@@ -83,8 +84,11 @@ function loadCached<T>(
 /** Cached `readGraph(wiringPath(outDir))` — same null-on-missing/unparseable
  * semantics, re-reads only when the wiring file's `(mtimeMs, size)` changed.
  * Returns a shared cached reference; callers must not mutate the returned graph. */
-export function loadGraphCached(outDir: string): GraphV1 | null {
-  const path = wiringPath(outDir);
+export function loadGraphCached(outDir: string, inPrefix?: string): GraphV1 | null {
+  // Scoped query → that scope's shard when the build wrote one (fork). The
+  // full graph is the fallback, so an old build behaves exactly as before.
+  const shard = shardFor(outDir, inPrefix);
+  const path = shard ? shardWiringPath(outDir, shard.slug) : wiringPath(outDir);
   return loadCached(graphCache, path, () => readGraph(path), () => {
     __parseCount.graph++;
   });
@@ -92,9 +96,10 @@ export function loadGraphCached(outDir: string): GraphV1 | null {
 
 /** Cached `readAskIndex(outDir)` — same semantics, keyed on the sidecar file.
  * Returns a shared cached reference; callers must not mutate the returned index. */
-export function loadAskIndexCached(outDir: string): AskIndex | null {
-  const path = askIndexPath(outDir);
-  return loadCached(askIndexCache, path, () => readAskIndex(outDir), () => {
+export function loadAskIndexCached(outDir: string, inPrefix?: string): AskIndex | null {
+  const shard = shardFor(outDir, inPrefix);
+  const path = shard ? shardAskIndexPath(outDir, shard.slug) : askIndexPath(outDir);
+  return loadCached(askIndexCache, path, () => (shard ? readAskIndexFile(path) : readAskIndex(outDir)), () => {
     __parseCount.askIndex++;
   });
 }

@@ -11,6 +11,7 @@ import { resolve } from "node:path";
 import { contextDirFor } from "../context/node-file.js";
 import { withSavings } from "../context/savings.js";
 import { loadGraphCached } from "../graph/load.js";
+import { normalizePathPrefix } from "../util/paths.js";
 import { grepGraph, type GrepGroup, type GrepResult } from "./grep.js";
 
 export interface GrepCliOptions {
@@ -87,7 +88,7 @@ export function zeroHitNote(result: GrepResult): string {
 export function runGrepCommand(pattern: string, dir: string, opts: GrepCliOptions): void {
   const root = resolve(dir);
   const contextDir = contextDirFor(root, opts.globalDir);
-  const graph = loadGraphCached(contextDir);
+  const graph = loadGraphCached(contextDir, opts.in ? normalizePathPrefix(opts.in) : undefined);
   if (!graph) {
     console.error("✗ no graph — run graft build first");
     process.exit(1);

@@ -162,7 +162,7 @@ interface Corpus {
   askIndex: AskIndex | null;
 }
 
-function loadCorpus(outDir: string): Corpus {
+function loadCorpus(outDir: string, inPrefix?: string): Corpus {
   const concepts: Corpus["concepts"] = [];
   if (existsSync(outDir)) {
     for (const entry of readdirSync(outDir)) {
@@ -186,7 +186,7 @@ function loadCorpus(outDir: string): Corpus {
       });
     }
   }
-  return { concepts, graph: loadGraphCached(outDir), askIndex: loadAskIndexCached(outDir) };
+  return { concepts, graph: loadGraphCached(outDir, inPrefix), askIndex: loadAskIndexCached(outDir, inPrefix) };
 }
 
 /** Score a document's token counts against the query counts (name field
@@ -1443,7 +1443,9 @@ export function ask(dir: string, query: string, opts: AskOptions = {}): AskResul
   const root = resolve(dir);
   const outDir = contextDirFor(root, opts.contextDir);
   const limit = opts.limit ?? 8;
-  const corpus = loadCorpus(outDir);
+  // Normalized here (see the comment below) so the corpus load can pick the scope's shard.
+  const inPrefix = opts.in ? normalizePathPrefix(opts.in) : undefined;
+  const corpus = loadCorpus(outDir, inPrefix);
   const graphRank = opts.graphRank ?? true;
   const fileFirst = opts.fileFirst ?? true;
   // The production path uses bounded file scoring plus an exact baseline top lock.
@@ -1457,7 +1459,6 @@ export function ask(dir: string, query: string, opts: AskOptions = {}): AskResul
   // suggestion always includes the slash, so rejecting it would make the tool's
   // own suggested next command fail — and `--in frontend\sub` must work too,
   // because that is what a Windows shell's tab-completion produces.
-  const inPrefix = opts.in ? normalizePathPrefix(opts.in) : undefined;
 
   // `--in` validated up front, before any mode runs.
   if (inPrefix && corpus.graph) assertPrefixIndexed(corpus.graph, inPrefix);
@@ -1563,7 +1564,8 @@ export interface SkeletonResult {
  * `file` is matched as an exact repo-relative path, then as a basename. */
 export function skeleton(dir: string, file: string, opts: { contextDir?: string } = {}): SkeletonResult {
   const outDir = contextDirFor(resolve(dir), opts.contextDir);
-  const graph = loadGraphCached(outDir);
+  // The file path is its own scope hint: a repo-relative path lands in that repo's shard.
+  const graph = loadGraphCached(outDir, file.includes("/") ? file : undefined);
   if (!graph) return { file, entries: [], note: "no wiring graph — run `graft build` first" };
 
   let defs = graph.nodes.filter((n) => n.kind !== "file" && n.path === file);

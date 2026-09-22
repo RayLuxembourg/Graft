@@ -7,6 +7,7 @@ Everything here was measured first on the 66-repo `~/work` index in benchmark ru
 
 ### Changed — `ask` ranking
 
+- Per-scope shards: `graft build` writes `.graph/scopes/<scope>.wiring.json` + `.cache/scopes/<scope>.ask-index.json` for every discovered scope (the scope's nodes, the edges touching them, the foreign nodes those edges reach, and a sidecar slice with its own IDF). `ask --in`, `grep --in`, `callers --in` and `skeleton <file>` load the containing scope's shard instead of the 398 MB workspace graph. Unscoped queries are unchanged.
 - JavaScript (AngularJS-era) symbols: `this.x = function` / `me.x = …` / `Ctor.prototype.x = …` become `method` nodes, and a registrar call `mod.command('name', […])` / `mod.service` / `.factory` / `.controller` / `.directive` / `.filter` / `.provider` / `.component` / `.constant` / `.value` becomes a `module` node that owns them. Member calls in `.js` files with no receiver type resolve to a UNIQUE method name as an `inferred` edge (DI code never has a receiver type; without this `callers` was empty for a whole codebase — run 10, B2/B3). `skeleton` of a 70-line command file no longer shows a `$translate` stub only.
 - `grep`: symbols are indexed by path in one pass instead of scanning every graph node per searched file — a repo-scoped grep on the 290k-node workspace graph drops from 62 s to 2 s (`--in frontend/PrismWebClient/`, benchmark run 10).
 - **Stemming and query-filler stopwords** in the shared tokenizer, so "tokens" meets
