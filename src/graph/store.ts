@@ -389,6 +389,36 @@ export class Store {
     return this.assemble(nodes, edges);
   }
 
+  /**
+   * Unscoped `grep` prefilter: the files whose indexed token bags (name, path,
+   * body residual) contain EVERY given token. A literal like `fields/search`
+   * tokenizes to `fields` + `search`; only files carrying both are then read
+   * and regex-scanned, instead of all 47k. Bodies are capped at 5,000 chars per
+   * symbol, so a literal deep in a very long function can be missed — the CLI
+   * says how many files were scanned so a zero-hit result is never silent.
+   */
+  filesForTokens(tokens: string[]): string[] {
+    const ts = [...new Set(tokens.filter((t) => FTS_TOKEN.test(t)))];
+    if (!ts.length) return [];
+    const match = ts.map((t) => `"${t}"`).join(" AND ");
+    const rows = this.db
+      .prepare("SELECT DISTINCT n.path AS path FROM docfts f JOIN nodes n ON n.id = f.id WHERE docfts MATCH ?")
+      .all(match) as unknown as { path: string }[];
+    return [...new Set(rows.map((r) => r.path))].sort();
+  }
+
+  /** The file nodes for `paths` plus every symbol in them — what `grepGraph` needs. */
+  filesGraph(paths: string[]): GraphV1 {
+    const nodes: NodeV1[] = [];
+    for (const c of chunks(paths, IN_CHUNK)) {
+      const rows = this.db.prepare(`SELECT data FROM nodes WHERE path IN (${placeholders(c.length)})`).all(...c) as unknown as NodeRow[];
+      for (const r of rows) nodes.push(JSON.parse(r.data));
+    }
+    nodes.sort((a, b) => a.id.localeCompare(b.id));
+    const edges = this.edgesTouching(nodes.map((n) => n.id), "in");
+    return this.assemble(nodes, edges);
+  }
+
   /** The nodes of one file, matched as an exact path then as a basename. */
   fileGraph(file: string): GraphV1 {
     let rows = this.db.prepare("SELECT data FROM nodes WHERE path = ?").all(file) as unknown as NodeRow[];
