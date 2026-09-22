@@ -279,7 +279,11 @@ export function resolveEdges(
           // when the bare name is a UNIQUE method across the reachable graph, and it
           // is labelled `inferred`.
           if (JS_EXT.test(e.file)) {
-            const jsHit = resolveName(e.name!, e.file, ["method"], perFileName, globalName);
+            // Methods AND plain functions: an AngularJS factory returns `{ saveFileFromStream }`
+            // built from inner `function saveFileFromStream()` declarations, and every
+            // consumer calls it as `exportFactory.saveFileFromStream()` — a member call
+            // whose target is a function node. Uniqueness is still across both kinds.
+            const jsHit = resolveName(e.name!, e.file, ["method", "function"], perFileName, globalName);
             if (jsHit && jsHit.id !== e.source) add(e.source, jsHit.id, "calls", "inferred");
           }
           continue;

@@ -54,12 +54,18 @@ test("a call on a member-assigned method resolves to an edge, so `callers` can a
     writeFileSync(join(dir, "package.json"), "{}");
     writeFileSync(join(dir, "src/svc.js"), "mod.service('jaqlSvc', [function () {\n  var me = this;\n  me.unmergeMembers = function (a, b) {\n    return a;\n  };\n}]);\n");
     writeFileSync(join(dir, "src/model.js"), "mod.factory('filterItem', [function (jaqlSvc) {\n  return {\n    unmergeWith(item) {\n      return jaqlSvc.unmergeMembers(this.jaql, item);\n    },\n  };\n}]);\n");
+    // a factory-inner plain function, exported through the returned object and called as a member
+    writeFileSync(join(dir, "src/export.js"), "mod.factory('exportFactory', [function () {\n  function saveFileFromStream(response, name) {\n    return name;\n  }\n  return { saveFileFromStream };\n}]);\n");
+    writeFileSync(join(dir, "src/ctrl.js"), "mod.controller('tablePreview', [function (exportFactory) {\n  this.download = function (response) {\n    return exportFactory.saveFileFromStream(response, 'x.pdf');\n  };\n}]);\n");
     await buildGraph(dir);
     const g = loadGraphCached(join(dir, "graft"))!;
     const target = g.nodes.find((n) => n.name === "unmergeMembers")!;
     assert.ok(target, "unmergeMembers node missing");
     const callers = g.edges.filter((e) => e.target === target.id && e.relation !== "contains").map((e) => e.source);
     assert.ok(callers.some((id) => id.endsWith("unmergeWith")), `callers: ${callers.join(" | ")}`);
+    const fn = g.nodes.find((n) => n.name === "saveFileFromStream")!;
+    const fnCallers = g.edges.filter((e) => e.target === fn.id && e.relation !== "contains").map((e) => e.source);
+    assert.ok(fnCallers.some((id) => id.endsWith("download")), `saveFileFromStream callers: ${fnCallers.join(" | ")}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
